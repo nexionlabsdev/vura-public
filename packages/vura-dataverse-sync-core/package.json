@@ -1,0 +1,51 @@
+{
+  "name": "@vura-data-os/vura-dataverse-sync-core",
+  "version": "1.0.0",
+  "description": "Host-agnostic Microsoft Dataverse $batch sync engine, shared by vura-dataverse-adapter (VS Code) and vura-dataverse-runner-plugin (CLI)",
+  "keywords": [
+    "vura",
+    "data-os",
+    "dynamics-365",
+    "dataverse",
+    "odata",
+    "sync"
+  ],
+  "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/vura-dataverse-sync-core#readme",
+  "bugs": {
+    "url": "https://github.com/nexionlabsdev/vura-public/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nexionlabsdev/vura-public/#main",
+    "directory": "packages/vura-dataverse-sync-core"
+  },
+  "license": "AGPL-3.0",
+  "author": "Nexion Labs <info@nexionlabs.dev> (https://nexionlabs.dev)",
+  "type": "commonjs",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "files": [
+    "out"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "compile": "tsc -b ./",
+    "watch": "tsc -b -w ./",
+    "prepublishOnly": "npm run compile"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.6.4",
+    "@vura-data-os/core-sdk": "^1.0.1",
+    "uuid": "^13.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.9.3"
+  }
+}

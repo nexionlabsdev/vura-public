@@ -1,0 +1,34 @@
+{
+  "products": [
+    {
+      "id": "P001",
+      "name": "Widget A",
+      "details": {
+        "weight": 1.2,
+        "dimensions": {
+          "length": 10,
+          "width": 5,
+          "height": 2
+        }
+      },
+      "tags": ["featured", "new"]
+    },
+    {
+      "id": "P002",
+      "name": "Widget B",
+      "details": {
+        "weight": 2.5,
+        "dimensions": {
+          "length": 15,
+          "width": 8,
+          "height": 4
+        }
+      },
+      "tags": ["sale"]
+    }
+  ],
+  "metadata": {
+    "version": "1.0",
+    "updatedAt": "2023-10-27T10:00:00Z"
+  }
+}

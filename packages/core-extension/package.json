@@ -1,0 +1,329 @@
+{
+  "name": "vura-core",
+  "displayName": "VURA Studio",
+  "description": "VURA replaces a fragmented stack of integration middleware, reporting tools, and compliance software with a single engineer-native platform.",
+  "version": "0.0.1",
+  "publisher": "nexion-labs",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "notebooks": [
+      {
+        "type": "vura-notebook",
+        "displayName": "VURA Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.flownb"
+          }
+        ]
+      }
+    ],
+    "notebookRenderer": [
+      {
+        "id": "vura-visual-renderer",
+        "displayName": "VURA Visual",
+        "entrypoint": "./out/assets/vuraRenderer.js",
+        "mimeTypes": [
+          "application/vnd.vura.visual"
+        ]
+      }
+    ],
+    "customEditors": [],
+    "languages": [
+      {
+        "id": "vura-terminal",
+        "aliases": [
+          "Vura Terminal"
+        ]
+      },
+      {
+        "id": "vega-lite",
+        "aliases": [
+          "Vega-Lite"
+        ],
+        "configuration": "./syntaxes/vega-lite-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "vega-lite",
+        "scopeName": "source.vega-lite",
+        "path": "./syntaxes/vega-lite.tmGrammar.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "universalSql.execute",
+        "title": "Universal SQL: Execute Query",
+        "icon": "$(play)"
+      },
+      {
+        "command": "universalSql.cancel",
+        "title": "Universal SQL: Cancel Execution",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "vura-sql.refreshSchema",
+        "title": "Refresh Schema",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vura-sql.switchProfile",
+        "title": "Switch Profile"
+      },
+      {
+        "command": "vura-sql.history.inject",
+        "title": "Inject SQL"
+      },
+      {
+        "command": "vura-sql.history.deleteEntry",
+        "title": "Delete Entry",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vura-sql.history.clearAll",
+        "title": "Clear History",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "vura-notebook.selectVenv",
+        "title": "Python Environment",
+        "icon": "$(python)"
+      },
+      {
+        "command": "vura-notebook.setTableName",
+        "title": "VURA Notebook: Set Table Name"
+      },
+      {
+        "command": "vura-notebook.setConnection",
+        "title": "VURA Notebook: Set Connection"
+      },
+      {
+        "command": "vura-notebook.setPythonPath",
+        "title": "VURA Notebook: Set Python Path"
+      },
+      {
+        "command": "vura-notebook.exportCellOutput",
+        "title": "Export Cell Output",
+        "icon": "$(export)"
+      },
+      {
+        "command": "vura-notebook.copyCellOutput",
+        "title": "Copy Cell Output",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "vura-notebook.setTemplateContext",
+        "title": "VURA Notebook: Set Template Context"
+      },
+      {
+        "command": "vura-notebook.exportTemplatePdf",
+        "title": "VURA Notebook: Export Template to PDF",
+        "icon": "$(file-pdf)"
+      },
+      {
+        "command": "vura-notebook.setDataverseConnection",
+        "title": "VURA Notebook: Set Dataverse Connection"
+      },
+      {
+        "command": "vura-notebook.toggleJsonMode",
+        "title": "VURA Notebook: Toggle JSON Cell Mode"
+      },
+      {
+        "command": "vura-notebook.setGraphSource",
+        "title": "VURA Notebook: Set Graph Source"
+      },
+      {
+        "command": "vura-notebook.setGraphDataPath",
+        "title": "VURA Notebook: Set Graph Data Path"
+      },
+      {
+        "command": "vura-notebook.exportVegaGraphPdf",
+        "title": "VURA Notebook: Export Graph to PDF",
+        "icon": "$(file-pdf)"
+      },
+      {
+        "command": "vura-notebook.toggleHttpOutput",
+        "title": "VURA Notebook: Toggle API Output",
+        "icon": "$(globe)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "when": "resourceLangId == sql",
+          "command": "universalSql.execute",
+          "group": "navigation@1"
+        },
+        {
+          "when": "resourceLangId == sql",
+          "command": "universalSql.cancel",
+          "group": "navigation@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vura-sql.refreshSchema",
+          "when": "view == vura-sql.schemaExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "vura-sql.history.clearAll",
+          "when": "view == vura-sql.historyExplorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vura-sql.history.deleteEntry",
+          "when": "view == vura-sql.historyExplorer && viewItem == historyEntry",
+          "group": "inline"
+        },
+        {
+          "command": "vura-sql.history.deleteEntry",
+          "when": "view == vura-sql.historyExplorer && viewItem == historyEntry",
+          "group": "1_actions"
+        }
+      ],
+      "notebook/toolbar": [
+        {
+          "command": "vura-notebook.selectVenv",
+          "when": "notebookType == 'vura-notebook'",
+          "group": "navigation@1"
+        }
+      ],
+      "notebook/cell/title": [
+        {
+          "command": "vura-notebook.exportCellOutput",
+          "when": "notebookType == 'vura-notebook' && notebookCellHasOutputs",
+          "group": "inline"
+        },
+        {
+          "command": "vura-notebook.toggleHttpOutput",
+          "when": "notebookType == 'vura-notebook'",
+          "group": "inline"
+        },
+        {
+          "command": "vura-notebook.copyCellOutput",
+          "when": "notebookType == 'vura-notebook' && notebookCellHasOutputs",
+          "group": "inline"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "universalSql.execute",
+        "key": "f5",
+        "when": "editorLangId == 'sql' && editorTextFocus"
+      },
+      {
+        "command": "universalSql.cancel",
+        "key": "shift+f5",
+        "when": "editorLangId == 'sql' && editorTextFocus"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vura-sql-container",
+          "title": "VURA SQL",
+          "icon": "media/icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "vura-sql-panel",
+          "title": "SQL Results",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vura-sql-container": [
+        {
+          "id": "vura-sql.configView",
+          "name": "Connection Configuration",
+          "type": "webview"
+        },
+        {
+          "id": "vura-sql.schemaExplorer",
+          "name": "Schema Explorer",
+          "type": "tree"
+        },
+        {
+          "id": "vura-sql.historyExplorer",
+          "name": "Query History",
+          "type": "tree"
+        }
+      ],
+      "vura-sql-panel": [
+        {
+          "id": "vura-sql.resultsView",
+          "name": "SQL Query Results",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VURA Platform",
+      "properties": {
+        "vura.browserPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the local browser executable (Chrome/Edge) used for rendering PDFs. Leave empty to use OS defaults."
+        },
+        "vura.odataBatchSize": {
+          "type": "number",
+          "default": 500,
+          "description": "Number of records to chunk for Dynamics 365 OData $batch requests."
+        },
+        "vura.depthLimit": {
+          "type": "number",
+          "default": 5,
+          "description": "The depth limit for recursive traversal in the Auto-Schema Flattener."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b ./ && node scripts/postbuild.js",
+    "watch": "tsc -b -w ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/mssql": "^12.3.0",
+    "@types/node": "18.x",
+    "@types/nunjucks": "^3.2.6",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^6.4.1",
+    "@typescript-eslint/parser": "^6.4.1",
+    "electron-rebuild": "^3.2.9",
+    "eslint": "^8.47.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@vura-data-os/core-sdk": "^1.0.0",
+    "@azure/msal-node": "^2.6.4",
+    "@vura-data-os/vura-runner": "^1.0.0",
+    "@vscode/webview-ui-toolkit": "^1.3.1",
+    "apache-arrow": "^21.1.0",
+    "csv-parser": "^3.2.0",
+    "csv-stringify": "^6.7.0",
+    "duckdb": "^1.4.4",
+    "exceljs": "^4.4.0",
+    "mssql": "^10.0.2",
+    "nunjucks": "^3.2.4",
+    "parquetjs-lite": "^0.8.7",
+    "puppeteer-core": "^24.42.0",
+    "uuid": "^13.0.0",
+    "yaml": "^2.8.4"
+  }
+}

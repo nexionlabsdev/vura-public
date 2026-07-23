@@ -1,0 +1,176 @@
+version: 1
+cells:
+  - kind: 2
+    language: sql
+    value: |-
+      -- Step 1: Pull accounts from D365 Mock Server into DuckDB
+      SELECT * FROM accounts;
+    metadata:
+      tableName: accounts
+      connectionId: local-sql-server-7043
+      connectionName: Local SQL Server
+  - kind: 2
+    language: sql
+    value: |-
+      -- Step 1: Pull accounts from D365 Mock Server into DuckDB
+      SELECT * FROM contacts;
+    metadata:
+      connectionName: Local SQL Server
+      connectionId: local-sql-server-7043
+  - kind: 2
+    language: vura-terminal
+    value: '!ingest-file "nested_data.json" json -> ingest_nested_data'
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: SELECT * FROM ingest_nested_data_products_details_dimensions;
+    metadata: {}
+  - kind: 2
+    language: vura-terminal
+    value: "!pip3 install pandas pyarrow"
+    metadata: {}
+  - kind: 2
+    language: python
+    value: >
+      import vura_bridge
+
+      import pandas as pd
+
+
+      # Step 2: Transform Data using Python
+
+      # 1. Get the data from shared memory (DuckDB via vura_bridge)
+
+      df = vura_bridge.get_table("accounts")
+
+
+      # 2. Perform Advanced Analysis: Pivot table on revenue by account category
+
+      print("Performing advanced analysis...")
+
+      pivot_df = pd.pivot_table(df, values='revenue',
+      index='accountcategorycode', aggfunc='mean')
+
+      print(pivot_df)
+
+
+      # 3. Modify data (e.g., increase revenue by 10% for category 1)
+
+      df.loc[df['accountcategorycode'] == 1, 'revenue'] = df['revenue'] * 1.20
+
+
+      # 4. Save back to shared memory
+
+      vura_bridge.save_table("processed_accounts", df)
+
+      print("Python transformation complete.")
+    metadata: {}
+  - kind: 2
+    language: javascript
+    value: >
+      // Step 3: Demonstrate the Auto-Schema Flattener using vura_bridge in JS
+
+      import { saveNested, loadReconstructed } from "vura_bridge";
+
+      import { readFileSync } from "fs";
+
+
+      async function processNestedData() {
+        // Load nested JSON data
+        const rawData = readFileSync("./nested_data.json", "utf8");
+        const complexObject = JSON.parse(rawData);
+
+        // Save complex object (auto-shredded into relational Parquet tables)
+        await saveNested("flattened_products", complexObject);
+        console.log("Nested data saved and flattened.");
+
+        // Reconstruct complex object back from relational tables
+        const reconstructed = await loadReconstructed("flattened_products");
+        console.log("Reconstructed JSON:", JSON.stringify(reconstructed, null, 2));
+      }
+
+
+      processNestedData().catch(console.error);
+    metadata: {}
+  - kind: 2
+    language: vura-terminal
+    value: >-
+      -- Step 4: Sync the processed accounts back to the D365 mock server via
+      the external Add-on
+
+      !sync_dataverse --source processed_accounts --target accounts --mode upsert
+    metadata: {}
+  - kind: 2
+    language: json
+    value: >-
+      {
+        "$query": "SELECT accountcategorycode, AVG(revenue) as avg_revenue FROM processed_accounts GROUP BY accountcategorycode",
+        "$as": "array"
+      }
+    metadata:
+      vuraType: json-compose
+  - kind: 2
+    language: vega-lite
+    value: |-
+      {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "description": "Average Revenue by Account Category",
+        "mark": "bar",
+        "encoding": {
+          "x": {"field": "accountcategorycode", "type": "nominal"},
+          "y": {"field": "avg_revenue", "type": "quantitative"},
+          "color": {"field": "accountcategorycode", "type": "nominal"}
+        }
+      }
+    metadata:
+      graphSourceCell: 8
+      graphSourceCellName: cell_8
+  - kind: 2
+    language: html
+    value: >
+      <!-- Step 7: HTML Template Cell rendering a Dashboard/Invoice -->
+
+      <style>
+        .dashboard { font-family: sans-serif; padding: 20px; }
+        .kpi { display: inline-block; padding: 15px; margin: 10px; background: #f0f0f0; border-radius: 8px; border-left: 5px solid #007acc; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+      </style>
+
+
+      <div class="dashboard">
+        <h2>📊 D365 Accounts KPI Dashboard</h2>
+
+        <div class="kpi">
+          <h3>Total Processed Accounts</h3>
+          <p style="font-size: 24px; font-weight: bold;">{{ count }}</p>
+        </div>
+
+        <h3>Recent Accounts Overview</h3>
+        <table>
+          <thead>
+            <tr>
+              {% for key in row | keys %}
+                <th>{{ key }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                {% for key in r | keys %}
+                  <td>{{ r[key] }}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    metadata:
+      templateContextTable: processed_accounts
+      metadata:
+        notebookRunGroups:
+          groupValue: "2"
+requiredPlugins:
+  - "@vura-data-os/vura-dataverse-runner-plugin"

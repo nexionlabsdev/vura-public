@@ -1,0 +1,49 @@
+{
+  "name": "@vura-data-os/vura-dataverse-runner-plugin",
+  "version": "1.0.0",
+  "description": "vura-runner CLI plugin adding !sync_dataverse support, sharing its sync engine with the VS Code vura-dataverse-adapter Add-on",
+  "keywords": [
+    "vura",
+    "data-os",
+    "vura-runner",
+    "dynamics-365",
+    "dataverse",
+    "plugin"
+  ],
+  "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/vura-dataverse-runner-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/nexionlabsdev/vura-public/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nexionlabsdev/vura-public/#main",
+    "directory": "packages/vura-dataverse-runner-plugin"
+  },
+  "license": "AGPL-3.0",
+  "author": "Nexion Labs <info@nexionlabs.dev> (https://nexionlabs.dev)",
+  "type": "commonjs",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "files": [
+    "out"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "compile": "tsc -b ./",
+    "watch": "tsc -b -w ./",
+    "prepublishOnly": "npm run compile"
+  },
+  "dependencies": {
+    "@vura-data-os/core-sdk": "^1.0.1",
+    "@vura-data-os/vura-dataverse-sync-core": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "typescript": "^5.9.3"
+  }
+}

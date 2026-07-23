@@ -1,0 +1,29 @@
+{
+  "name": "vura-dataverse-adapter",
+  "displayName": "Dataverse Adapter",
+  "description": "Dataverse Add-on for Vura Data OS",
+  "version": "1.0.0",
+  "publisher": "nexion-labs",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": [
+    "onExtension:nexion-labs.vura-core"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -b ./ && node scripts/postbuild.js",
+    "watch": "tsc -b -w ./"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.1",
+    "@vura-data-os/core-sdk": "^1.0.0",
+    "@vura-data-os/vura-dataverse-sync-core": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.9.3"
+  }
+}

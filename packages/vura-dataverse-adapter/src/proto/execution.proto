@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package execution;
+
+option go_package = "vura-orchestrator/proto;execution";
+
+service ExecutionService {
+  rpc ExecuteScript (ExecuteScriptRequest) returns (ExecuteScriptResponse);
+}
+
+service SecretService {
+  rpc GetSecret (GetSecretRequest) returns (GetSecretResponse);
+}
+
+message GetSecretRequest {
+  string key = 1;
+}
+
+message GetSecretResponse {
+  string value = 1;
+  string error_message = 2;
+}
+
+message ExecuteScriptRequest {
+  string run_id = 1;
+  string cell_id = 2;
+  string script_content = 3;
+  string git_hash = 4;
+}
+
+message ExecuteScriptResponse {
+  bool success = 1;
+  string error_message = 2;
+  string output_logs = 3;
+}

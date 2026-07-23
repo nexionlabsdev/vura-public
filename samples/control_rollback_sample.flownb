@@ -1,0 +1,104 @@
+- kind: 1
+  language: markdown
+  value: >-
+    ## Control & Rollback Sample Flow
+
+    This flow simulates an ETL job with a data quality gate and a rollback
+    mechanism. It demonstrates the `runWhen` and `groups` execution control
+    features.
+
+    To test the success path (where the data passes quality checks), change the
+    revenue of `ACC003` from `0.0` to `75000.0` in the SQL cell below.
+  metadata: {}
+- kind: 2
+  language: sql
+  value: >-
+    -- Setup: Fetch raw accounts data. (Includes a zero-revenue account to
+    trigger the quality check failure)
+
+    CREATE OR REPLACE TABLE raw_accounts AS
+
+    SELECT * FROM (VALUES
+      ('ACC001', 'Acme Corp', 1, 85000.0),
+      ('ACC002', 'Beta Ltd',  2, 92000.0),
+      ('ACC003', 'Gamma Inc', 1, 0.0)
+    ) t(account_id, name, category, revenue);
+  metadata:
+    label: fetch_raw
+    group: setup
+- kind: 2
+  language: json
+  value: >-
+    {
+      "_comment": "Builds the quality_check object used in Cell 4's runWhen",
+      "$query": "SELECT COUNT(*) as total, SUM(CASE WHEN revenue <= 0 THEN 1 ELSE 0 END) as zero_revenue_count FROM raw_accounts",
+      "$as": "single"
+    }
+  metadata:
+    label: quality_check
+    group: setup
+- kind: 2
+  language: sql
+  value: >-
+    -- Transforms accounts but ONLY if the quality check passed (no zero-revenue
+    accounts).
+
+    CREATE OR REPLACE TABLE processed_accounts AS
+
+    SELECT account_id, name, category, revenue * 1.1 AS adjusted_revenue
+
+    FROM raw_accounts;
+  metadata:
+    label: transform_accounts
+    group: main-etl
+    runWhen: quality_check.output.zero_revenue_count == 0
+- kind: 2
+  language: sql
+  value: >-
+    -- Summarizes the processed accounts. Inherits group abort if the previous
+    cell fails/skips.
+
+    CREATE OR REPLACE TABLE summary AS
+
+    SELECT category, COUNT(*) as count, AVG(adjusted_revenue) as avg_revenue
+
+    FROM processed_accounts GROUP BY category;
+  metadata:
+    label: write_summary
+    group: main-etl
+- kind: 2
+  language: sql
+  value: >-
+    -- Rollback: drops processed_accounts and resets summary to an empty table.
+
+    -- We reset rather than drop summary so the http_response cell's $table
+    reference
+
+    -- always resolves regardless of which execution path was taken.
+
+    DROP TABLE IF EXISTS processed_accounts;
+
+    CREATE OR REPLACE TABLE summary AS
+
+    SELECT NULL::VARCHAR AS category, 0 AS count, 0.0 AS avg_revenue WHERE
+    FALSE;
+  metadata:
+    label: rollback_cleanup
+    group: rollback
+    runWhen: group.main_etl.status == 'error' or group.main_etl.status == 'partial'
+- kind: 2
+  language: json
+  value: >-
+    {
+      "$headers": { "Content-Type": "application/json" },
+      "$body": {
+        "quality_check": {
+          "$query": "SELECT COUNT(*) as total, SUM(CASE WHEN revenue <= 0 THEN 1 ELSE 0 END) as zero_revenue_count FROM raw_accounts",
+          "$as": "single"
+        },
+        "summary": { "$table": "summary", "$as": "array" }
+      }
+    }
+  metadata:
+    label: http_response
+    vura_is_http_output: true

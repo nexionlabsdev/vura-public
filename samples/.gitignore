@@ -1,0 +1,14 @@
+#.venv
+.venv/
+
+#vura cli
+.vura/
+
+#exported
+exported/
+
+# graph*
+graph*
+
+# outputs.json
+*.outputs.json

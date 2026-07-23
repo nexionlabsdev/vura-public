@@ -1,0 +1,300 @@
+name: Release
+
+# Trigger by pushing a tag like `v1.2.3`. Every publishable package (the 4 npm
+# packages and both VS Code extensions) is released in lockstep at that same
+# version — this repo doesn't do independent per-package versioning.
+#
+# npm publishing uses OIDC trusted publishing — no NPM_TOKEN secret needed.
+# One-time setup on npmjs.com for each of the 4 @vura-data-os/* packages:
+# Package Settings -> Trusted Publisher -> GitHub Actions, then set
+# Organization/Repository to this repo and Workflow filename to
+# `release.yml`. The publish-npm job's `id-token: write` permission below is
+# what lets it exchange the job's OIDC token for a short-lived npm token at
+# publish time — requires npm CLI >= 11.5.1, hence the npm self-update step.
+#
+# Optional secrets (skipped, not failed, if unset — the .vsix files are still
+# built and attached to the GitHub Release either way):
+#   VSCE_PAT   — Azure DevOps PAT for VS Code Marketplace publishing.
+#   OVSX_PAT   — Open VSX Registry publishing token.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Active LTS — bump in step with the Node.js release schedule.
+  NODE_VERSION: '24'
+
+jobs:
+  determine-version:
+    name: Determine release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#v}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  publish-npm:
+    name: Publish npm packages
+    needs: determine-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Set package versions to ${{ needs.determine-version.outputs.version }}
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          for pkg in core-sdk vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin; do
+            node -e "
+              const fs = require('fs');
+              const path = 'packages/$pkg/package.json';
+              const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+              pkg.version = '$VERSION';
+              for (const depType of ['dependencies']) {
+                if (!pkg[depType]) continue;
+                for (const dep of Object.keys(pkg[depType])) {
+                  if (dep.startsWith('@vura-data-os/')) pkg[depType][dep] = '^$VERSION';
+                }
+              }
+              fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+            "
+          done
+
+      # Dependency order: core-sdk has no internal deps; vura-dataverse-sync-core
+      # and vura-runner both depend only on core-sdk; vura-dataverse-runner-plugin
+      # depends on both of those.
+      - name: Build core-sdk
+        run: npm run compile --workspace=packages/core-sdk
+      - name: Build vura-dataverse-sync-core
+        run: npm run compile --workspace=packages/vura-dataverse-sync-core
+      - name: Build vura-runner
+        run: npm run compile --workspace=packages/vura-runner
+      - name: Build vura-dataverse-runner-plugin
+        run: npm run compile --workspace=packages/vura-dataverse-runner-plugin
+
+      - name: Test vura-runner
+        run: npm test --workspace=packages/vura-runner
+
+      - name: Publish (skips any package@version already on npm)
+        # No NODE_AUTH_TOKEN — OIDC trusted publishing exchanges this job's
+        # id-token for a short-lived npm token automatically. Requires each
+        # package to have a Trusted Publisher configured on npmjs.com first
+        # (see the workflow header comment).
+        run: |
+          set -e
+          for pkg in core-sdk vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin; do
+            NAME=$(node -p "require('./packages/$pkg/package.json').name")
+            VERSION=$(node -p "require('./packages/$pkg/package.json').version")
+            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+              echo "$NAME@$VERSION is already published — skipping."
+            else
+              echo "Publishing $NAME@$VERSION..."
+              (cd "packages/$pkg" && npm publish --access public --provenance)
+            fi
+          done
+
+  package-core-extension:
+    name: Package core-extension (${{ matrix.target }})
+    needs: [determine-version, publish-npm]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-13
+          - target: darwin-arm64
+            runner: macos-14
+          - target: linux-x64
+            runner: ubuntu-latest
+          # Public-repo GitHub-hosted Linux ARM64 runners — if this label isn't
+          # available on your plan/repo, drop this leg or point it at a
+          # self-hosted arm64 runner instead.
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: win32-x64
+            runner: windows-latest
+          # No GitHub-hosted win32-arm64 runner exists yet — that target needs
+          # a self-hosted Windows-on-ARM runner if you need it.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Update npm CLI
+        shell: bash
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ needs.determine-version.outputs.version }}
+        shell: bash
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          node -e "
+            const fs = require('fs');
+            const path = 'packages/core-extension/package.json';
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = '$VERSION';
+            if (pkg.dependencies) {
+              for (const dep of Object.keys(pkg.dependencies)) {
+                if (dep.startsWith('@vura-data-os/')) pkg.dependencies[dep] = '^$VERSION';
+              }
+            }
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      # core-extension is not an npm workspace member — its @vura-data-os/*
+      # deps resolve as normal npm packages. publish-npm has already published
+      # this exact version, so a plain install here fetches the real thing
+      # from the registry (no local tarball workaround needed at release time).
+      - name: Install dependencies
+        shell: bash
+        run: cd packages/core-extension && npm install --no-audit --no-fund
+
+      - name: Package
+        shell: bash
+        run: ./scripts/package-extension.sh core-extension --target ${{ matrix.target }} -o dist/vura-core-${{ matrix.target }}.vsix
+
+      - name: Publish to VS Code Marketplace
+        # secrets can't be referenced directly in `if:` (GitHub Actions
+        # rejects it at parse time: "Unrecognized named-value: 'secrets'") —
+        # only `env` is a valid context there, so route the check through it.
+        if: ${{ env.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        shell: bash
+        run: npx --yes @vscode/vsce publish --target ${{ matrix.target }} --packagePath dist/vura-core-${{ matrix.target }}.vsix --pat "$VSCE_PAT"
+
+      - name: Publish to Open VSX
+        if: ${{ env.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        shell: bash
+        run: npx --yes ovsx publish dist/vura-core-${{ matrix.target }}.vsix --target ${{ matrix.target }} --pat "$OVSX_PAT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vura-core-${{ matrix.target }}
+          path: dist/vura-core-${{ matrix.target }}.vsix
+
+  package-vura-dataverse-adapter:
+    name: Package vura-dataverse-adapter
+    needs: [determine-version, publish-npm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ needs.determine-version.outputs.version }}
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          node -e "
+            const fs = require('fs');
+            const path = 'packages/vura-dataverse-adapter/package.json';
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = '$VERSION';
+            if (pkg.dependencies) {
+              for (const dep of Object.keys(pkg.dependencies)) {
+                if (dep.startsWith('@vura-data-os/')) pkg.dependencies[dep] = '^$VERSION';
+              }
+            }
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      # vura-dataverse-adapter is not an npm workspace member — its @vura-data-os/*
+      # deps resolve as normal npm packages. publish-npm has already published
+      # this exact version, so a plain install here fetches the real thing
+      # from the registry (no local tarball workaround needed at release time).
+      - name: Install dependencies
+        run: cd packages/vura-dataverse-adapter && npm install --no-audit --no-fund
+
+      # No --target: vura-dataverse-adapter has no native dependencies, so one
+      # universal .vsix covers every platform.
+      - name: Package
+        run: ./scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ env.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish --packagePath dist/vura-dataverse-adapter.vsix --pat "$VSCE_PAT"
+
+      - name: Publish to Open VSX
+        if: ${{ env.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx publish dist/vura-dataverse-adapter.vsix --pat "$OVSX_PAT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vura-dataverse-adapter
+          path: dist/vura-dataverse-adapter.vsix
+
+  github-release:
+    name: Create GitHub Release
+    needs: [determine-version, package-core-extension, package-vura-dataverse-adapter]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release and attach .vsix files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.determine-version.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --title "v${{ needs.determine-version.outputs.version }}" \
+            --generate-notes \
+            artifacts/*/*.vsix

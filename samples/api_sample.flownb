@@ -1,0 +1,63 @@
+- kind: 1
+  language: markdown
+  value: >-
+    ## HTTP API Sample Flow
+
+    This flow demonstrates triggering a notebook via HTTP, validating inputs,
+    processing the request, and returning a JSON response.
+  metadata: {}
+- kind: 2
+  language: http-input
+  value: |-
+    {
+      "x-http-method": "post",
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" }
+          },
+          "required": ["name"]
+        },
+        "body": {
+          "type": "object",
+          "properties": {
+            "age": { }
+          }
+        }
+      },
+      "required": ["query"]
+    }
+  metadata: {}
+- kind: 2
+  language: sql
+  value: |-
+    CREATE OR REPLACE TABLE processed_req AS 
+    SELECT 
+      query.name as user_name, 
+      COALESCE(body.age, 0) as user_age, 
+      method as http_method 
+    FROM http_request;
+  metadata:
+    group: api-handler
+    vura_is_http_output: false
+- kind: 2
+  language: json
+  value: |-
+    {
+      "$headers": {
+        "Content-Type": "application/json",
+        "X-Custom-Vura": "Rocks!"
+      },
+      "$body": {
+        "message": "Welcome to VURA API",
+        "extracted_data": {
+          "$table": "processed_req",
+          "$as": "array"
+        }
+      }
+    }
+  metadata:
+    group: api-handler
+    vura_is_http_output: true

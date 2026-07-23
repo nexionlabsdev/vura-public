@@ -1,0 +1,11 @@
+{
+  "name": "vura",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "workspaces": [
+    "packages/core-sdk",
+    "packages/vura-dataverse-sync-core",
+    "packages/vura-runner",
+    "packages/vura-dataverse-runner-plugin"
+  ]
+}
