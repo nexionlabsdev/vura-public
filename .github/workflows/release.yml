@@ -202,7 +202,9 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         shell: bash
-        run: npx --yes @vscode/vsce publish --target ${{ matrix.target }} --packagePath dist/vura-core-${{ matrix.target }}.vsix --pat "$VSCE_PAT"
+        # vsce infers the target from the already-packaged .vsix itself —
+        # passing --target here too is rejected as a conflicting option.
+        run: npx --yes @vscode/vsce publish --packagePath dist/vura-core-${{ matrix.target }}.vsix --pat "$VSCE_PAT"
 
       - name: Publish to Open VSX
         if: ${{ env.OVSX_PAT != '' }}
