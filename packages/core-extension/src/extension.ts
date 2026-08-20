@@ -14,6 +14,7 @@ import { NotebookStatusBarProvider, registerNotebookStatusBarCommands } from './
 import { handleGridExport, handleVisualExport } from './notebook/exportHandler';
 import { handleGridCopy } from './notebook/copyHandler';
 import { saveNotebookOutputs, restoreNotebookOutputs } from './notebook/outputStorage';
+import { safeRegisterCommand } from './commandUtils';
 
 let outputChannel: vscode.OutputChannel;
 let notebookController: NotebookController | undefined;
@@ -81,7 +82,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    const refreshSchemaCmd = vscode.commands.registerCommand('vura-sql.refreshSchema', () => {
+    const refreshSchemaCmd = safeRegisterCommand('vura-sql.refreshSchema', () => {
         schemaExplorer.refresh();
     });
     context.subscriptions.push(refreshSchemaCmd);
@@ -92,7 +93,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerCompletionItemProvider('sql', intelliSenseProvider, '.')
     );
 
-    const switchProfileCmd = vscode.commands.registerCommand('vura-sql.switchProfile', async () => {
+    const switchProfileCmd = safeRegisterCommand('vura-sql.switchProfile', async () => {
         const profiles = ConnectionManager.getProfiles(context);
         if (profiles.length === 0) {
             vscode.window.showErrorMessage('No profiles available. Create one first!');
@@ -107,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const injectSqlCmd = vscode.commands.registerCommand('vura-sql.history.inject', (record: HistoryRecord) => {
+    const injectSqlCmd = safeRegisterCommand('vura-sql.history.inject', (record: HistoryRecord) => {
         const editor = vscode.window.activeTextEditor;
         if (editor && editor.document.languageId === 'sql') {
             editor.edit(editBuilder => {
@@ -120,7 +121,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const executeCmd = vscode.commands.registerCommand('universalSql.execute', async () => {
+    const executeCmd = safeRegisterCommand('vura.universalSql.execute', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor || editor.document.languageId !== 'sql') {
             vscode.window.showErrorMessage('No active SQL file. Open a .sql file to execute.');
@@ -191,7 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const cancelCmd = vscode.commands.registerCommand('universalSql.cancel', () => {
+    const cancelCmd = safeRegisterCommand('vura.universalSql.cancel', () => {
         if (activeSqlService) {
             activeSqlService.cancelExecution();
             outputChannel.appendLine('Execution was manually cancelled.');
@@ -205,7 +206,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const exportCellOutputCmd = vscode.commands.registerCommand('vura-notebook.exportCellOutput', async (cell: vscode.NotebookCell) => {
+    const exportCellOutputCmd = safeRegisterCommand('vura-notebook.exportCellOutput', async (cell: vscode.NotebookCell) => {
         if (!cell) return;
         
         // Check if the cell has visual HTML/Vega output
@@ -226,7 +227,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const copyCellOutputCmd = vscode.commands.registerCommand('vura-notebook.copyCellOutput', async (cell: vscode.NotebookCell) => {
+    const copyCellOutputCmd = safeRegisterCommand('vura-notebook.copyCellOutput', async (cell: vscode.NotebookCell) => {
         if (!cell) return;
         const tableName = cell.metadata?.tableName || `cell_${cell.index}`;
         if (context.storageUri) {
@@ -236,7 +237,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    const toggleHttpOutputCmd = vscode.commands.registerCommand('vura-notebook.toggleHttpOutput', async (cell: vscode.NotebookCell) => {
+    const toggleHttpOutputCmd = safeRegisterCommand('vura-notebook.toggleHttpOutput', async (cell: vscode.NotebookCell) => {
         if (!cell) return;
         const currentMeta = cell.metadata || {};
         const isHttpOutput = currentMeta.vura_is_http_output;
@@ -250,13 +251,13 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`Cell ${cell.index + 1} is ${!isHttpOutput ? 'now' : 'no longer'} the API HTTP Output.`);
     });
 
-    const deleteHistoryEntryCmd = vscode.commands.registerCommand('vura-sql.history.deleteEntry', async (item: any) => {
+    const deleteHistoryEntryCmd = safeRegisterCommand('vura-sql.history.deleteEntry', async (item: any) => {
         if (item?.record?.id) {
             await historyExplorer.deleteRecord(item.record.id);
         }
     });
 
-    const clearHistoryCmd = vscode.commands.registerCommand('vura-sql.history.clearAll', async () => {
+    const clearHistoryCmd = safeRegisterCommand('vura-sql.history.clearAll', async () => {
         const confirm = await vscode.window.showWarningMessage(
             'Clear entire query history?', { modal: true }, 'Clear All'
         );

@@ -7,5 +7,8 @@
     "packages/vura-dataverse-sync-core",
     "packages/vura-runner",
     "packages/vura-dataverse-runner-plugin"
-  ]
+  ],
+  "dependencies": {
+    "@vura-data-os/vura-runner": "^1.0.0"
+  }
 }

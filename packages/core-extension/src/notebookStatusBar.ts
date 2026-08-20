@@ -3,6 +3,7 @@ import * as path from 'path';
 import { ConnectionManager } from './connectionManager';
 import { handleGridExport } from './notebook/exportHandler';
 import { handleGraphPdfExport } from './notebook/pdfExportHandler';
+import { safeRegisterCommand } from './commandUtils';
 
 const VENV_KEY = 'vura-notebook-pythonVenv';
 
@@ -274,7 +275,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
     _venvStatusBar.show();
 
     // --- Flow Control Commands ---
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setGroup', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setGroup', async (cell: vscode.NotebookCell) => {
         const groups = new Set<string>();
         for (const c of cell.notebook.getCells()) {
             if (c.metadata?.group) groups.add(c.metadata.group);
@@ -303,7 +304,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await vscode.workspace.applyEdit(edit);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setLabel', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setLabel', async (cell: vscode.NotebookCell) => {
         const currentLabel = cell.metadata?.label || '';
         const newLabel = await vscode.window.showInputBox({
             title: 'Cell Label',
@@ -324,7 +325,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await vscode.workspace.applyEdit(edit);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setRunWhen', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setRunWhen', async (cell: vscode.NotebookCell) => {
         const step1Items: vscode.QuickPickItem[] = [
             { label: 'Previous cell status', description: "cell_N.status == 'error'" },
             { label: 'Specific cell/group status', description: 'Prompts for label/group name' },
@@ -382,7 +383,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
     }));
 
     // --- Select / Create Venv command ---
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.selectVenv', async () => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.selectVenv', async () => {
         const current = context.workspaceState.get<string>(VENV_KEY);
         const isWin = process.platform === 'win32';
 
@@ -486,7 +487,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             vscode.window.showInformationMessage(`Created and activated venv: ${venvName}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setTableName', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setTableName', async (cell: vscode.NotebookCell) => {
         const defaultName = cell.metadata?.tableName || `cell_${cell.index}`;
         const newName = await vscode.window.showInputBox({
             prompt: 'Enter table name for this cell',
@@ -501,7 +502,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setConnection', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setConnection', async (cell: vscode.NotebookCell) => {
         const profiles = ConnectionManager.getProfiles(context);
         const localOption = { label: 'Context In-Memory (DuckDB)', description: 'Local memory', id: 'local' };
 
@@ -517,7 +518,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setPythonPath', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setPythonPath', async (cell: vscode.NotebookCell) => {
         const currentPath = cell.metadata?.pythonPath;
         const uris = await vscode.window.showOpenDialog({
             canSelectFiles: true,
@@ -540,14 +541,14 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.exportData', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.exportData', async (cell: vscode.NotebookCell) => {
         const storagePath = context.storageUri?.fsPath;
         if (!storagePath) return;
         const tableName = cell.metadata?.tableName || `cell_${cell.index}`;
         await handleGridExport(tableName, context);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.exportGraphPdf', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.exportGraphPdf', async (cell: vscode.NotebookCell) => {
         const storagePath = context.storageUri?.fsPath;
         if (!storagePath) return;
 
@@ -569,7 +570,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await handleGraphPdfExport(htmlContent, storagePath, context);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.configureOData', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.configureOData', async (cell: vscode.NotebookCell) => {
         const operation = await vscode.window.showQuickPick(['insert', 'update', 'delete'], {
             placeHolder: 'Select OData Operation'
         });
@@ -638,7 +639,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.ingestFile', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.ingestFile', async (cell: vscode.NotebookCell) => {
         const uri = await vscode.window.showOpenDialog({
             canSelectFiles: true,
             canSelectFolders: false,
@@ -684,7 +685,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
 
     // --- HTML Template Cell Commands ---
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setTemplateContext', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setTemplateContext', async (cell: vscode.NotebookCell) => {
         // Collect table names from all prior cells in the same notebook
         const notebook = cell.notebook;
         const pickItems: vscode.QuickPickItem[] = [{ label: 'None', description: 'No data context (static HTML)' }];
@@ -714,7 +715,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await vscode.workspace.applyEdit(edit);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.exportTemplatePdf', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.exportTemplatePdf', async (cell: vscode.NotebookCell) => {
         const storagePath = context.storageUri?.fsPath;
         if (!storagePath) return;
 
@@ -738,7 +739,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
 
     // --- Terminal Cell Commands ---
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setDataverseConnection', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setDataverseConnection', async (cell: vscode.NotebookCell) => {
         const profiles = ConnectionManager.getProfiles(context);
         // Filter to profiles that support OData (ServicePrincipal)
         const dataverseProfiles = profiles.filter(p => p.authMode === 'ServicePrincipal');
@@ -776,7 +777,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
     // --- JSON / Graph Cell Commands ---
 
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setGraphSource', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setGraphSource', async (cell: vscode.NotebookCell) => {
         const notebook = cell.notebook;
         const pickItems: vscode.QuickPickItem[] = [];
 
@@ -826,7 +827,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await vscode.workspace.applyEdit(edit);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.setGraphDataPath', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.setGraphDataPath', async (cell: vscode.NotebookCell) => {
         const currentPath = cell.metadata?.graphDataPath || '';
         const newPath = await vscode.window.showInputBox({
             prompt: 'Enter dot-path to data key in the JSON (e.g. "orders" or "dashboard.items"). Leave empty for root.',
@@ -843,7 +844,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await vscode.workspace.applyEdit(edit);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('vura-notebook.exportVegaGraphPdf', async (cell: vscode.NotebookCell) => {
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.exportVegaGraphPdf', async (cell: vscode.NotebookCell) => {
         const storagePath = context.storageUri?.fsPath;
         if (!storagePath) return;
 

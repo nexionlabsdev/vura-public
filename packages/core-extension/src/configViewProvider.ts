@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ConnectionManager, SqlProfile, AuthMode } from './connectionManager';
 import { SqlService } from '@vura-data-os/vura-runner';
 import { OutputChannelLogger } from './OutputChannelLogger';
+import { safeRegisterCommand } from './commandUtils';
 
 export class ConfigViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'vura-sql.configView';
@@ -95,7 +96,7 @@ export class ConfigViewProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        vscode.commands.registerCommand('vura-sql.refreshConfigurationPanel', () => {
+        safeRegisterCommand('vura-sql.refreshConfigurationPanel', () => {
             this._sendDataToWebview();
         });
     }

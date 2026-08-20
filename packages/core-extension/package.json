@@ -59,12 +59,12 @@
     ],
     "commands": [
       {
-        "command": "universalSql.execute",
+        "command": "vura.universalSql.execute",
         "title": "Universal SQL: Execute Query",
         "icon": "$(play)"
       },
       {
-        "command": "universalSql.cancel",
+        "command": "vura.universalSql.cancel",
         "title": "Universal SQL: Cancel Execution",
         "icon": "$(stop-circle)"
       },
@@ -158,12 +158,12 @@
       "editor/title": [
         {
           "when": "resourceLangId == sql",
-          "command": "universalSql.execute",
+          "command": "vura.universalSql.execute",
           "group": "navigation@1"
         },
         {
           "when": "resourceLangId == sql",
-          "command": "universalSql.cancel",
+          "command": "vura.universalSql.cancel",
           "group": "navigation@2"
         }
       ],
@@ -218,12 +218,12 @@
     },
     "keybindings": [
       {
-        "command": "universalSql.execute",
+        "command": "vura.universalSql.execute",
         "key": "f5",
         "when": "editorLangId == 'sql' && editorTextFocus"
       },
       {
-        "command": "universalSql.cancel",
+        "command": "vura.universalSql.cancel",
         "key": "shift+f5",
         "when": "editorLangId == 'sql' && editorTextFocus"
       }
