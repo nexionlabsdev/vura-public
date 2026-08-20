@@ -15,3 +15,11 @@ tsconfig.json
 # above (or a future .gitignore vsce merges in) would otherwise catch them.
 !node_modules/**/*.node
 !node_modules/duckdb/lib/binding/**
+
+# Exclude native build intermediate directories and source code
+**/node_modules/duckdb/build/**
+**/node_modules/duckdb/src/**
+**/node_modules/duckdb/deps/**
+
+# Keep only the compiled runtime binding
+!**/node_modules/duckdb/lib/binding/**

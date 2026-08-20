@@ -10,13 +10,13 @@ build:
 	cd packages/core-sdk && npm run compile
 	cd packages/vura-dataverse-sync-core && npm run compile
 	cd packages/vura-runner && npm run compile
-	./scripts/install-local-deps.sh core-extension
+	bash ./scripts/install-local-deps.sh core-extension
 	cd packages/core-extension && npm run compile
 
 # Package a .vsix for the current platform and install it into local VS Code.
 install:
-	./scripts/install-local-deps.sh core-extension
-	./scripts/package-extension.sh core-extension -o dist/vura-core.vsix
+	bash ./scripts/install-local-deps.sh core-extension
+	bash ./scripts/package-extension.sh core-extension -o dist/vura-core.vsix
 	code --install-extension dist/vura-core.vsix
 
 # Platform-specific .vsix bundles. `vsce --target` labels the package for that
@@ -26,25 +26,25 @@ install:
 # Mac) require running the matching target on that platform's own CI runner,
 # same as any other extension bundling native modules.
 build-mac:
-	./scripts/install-local-deps.sh core-extension
-	./scripts/package-extension.sh core-extension --target darwin-x64 -o dist/vura-core-darwin-x64.vsix
-	./scripts/package-extension.sh core-extension --target darwin-arm64 -o dist/vura-core-darwin-arm64.vsix
+	bash ./scripts/install-local-deps.sh core-extension
+	bash ./scripts/package-extension.sh core-extension --target darwin-x64 -o dist/vura-core-darwin-x64.vsix
+	bash ./scripts/package-extension.sh core-extension --target darwin-arm64 -o dist/vura-core-darwin-arm64.vsix
 
 build-linux:
-	./scripts/install-local-deps.sh core-extension
-	./scripts/package-extension.sh core-extension --target linux-x64 -o dist/vura-core-linux-x64.vsix
-	./scripts/package-extension.sh core-extension --target linux-arm64 -o dist/vura-core-linux-arm64.vsix
+	bash ./scripts/install-local-deps.sh core-extension
+	bash ./scripts/package-extension.sh core-extension --target linux-x64 -o dist/vura-core-linux-x64.vsix
+	bash ./scripts/package-extension.sh core-extension --target linux-arm64 -o dist/vura-core-linux-arm64.vsix
 
 build-windows:
-	./scripts/install-local-deps.sh core-extension
-	./scripts/package-extension.sh core-extension --target win32-x64 -o dist/vura-core-win32-x64.vsix
-	./scripts/package-extension.sh core-extension --target win32-arm64 -o dist/vura-core-win32-arm64.vsix
+	bash ./scripts/install-local-deps.sh core-extension
+	bash ./scripts/package-extension.sh core-extension --target win32-x64 -o dist/vura-core-win32-x64.vsix
+	bash ./scripts/package-extension.sh core-extension --target win32-arm64 -o dist/vura-core-win32-arm64.vsix
 
 # The Dataverse Adapter has no native dependencies (pure JS: grpc-js, proto-loader,
 # core-sdk, vura-dataverse-sync-core), so it doesn't need per-platform builds.
 build-vura-dataverse-adapter:
-	./scripts/install-local-deps.sh vura-dataverse-adapter
-	./scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
+	bash ./scripts/install-local-deps.sh vura-dataverse-adapter
+	bash ./scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
 
 clean:
 	rm -rf dist
