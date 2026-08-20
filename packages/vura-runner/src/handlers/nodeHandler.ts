@@ -62,9 +62,11 @@ export async function handleNode(
 
     const depthLimit = env.getConfig<number>('vura.depthLimit', 5);
     const poolKey = `${env.notebookId}:node`;
-    const worker = await sidecarPool.acquire(poolKey, () => spawn('node', [sidecarScript, '--serve'], {
+    const nodeBin = process.execPath || 'node';
+    const worker = await sidecarPool.acquire(poolKey, () => spawn(nodeBin, [sidecarScript, '--serve'], {
         cwd: env.notebookDir,
-        env: { ...process.env, VURA_STORAGE_PATH: env.storagePath }
+        env: { ...process.env, VURA_STORAGE_PATH: env.storagePath },
+        windowsHide: true
     }));
 
     try {

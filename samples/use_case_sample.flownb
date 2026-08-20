@@ -2,6 +2,50 @@ version: 1
 cells:
   - kind: 2
     language: sql
+    value: "-- Replaces the table entirely if it already exists\r
+
+      CREATE OR REPLACE TABLE users AS \r
+
+      SELECT * FROM (\r
+
+      \    VALUES \r
+
+      \        (1, 'Alice Smith', 'alice@example.com', 28),\r
+
+      \        (2, 'Bob Jones', 'bob@example.com', 34),\r
+
+      \        (3, 'Charlie Brown', 'charlie@example.com', 22)\r
+
+      ) AS t(id, name, email, age);"
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: SELECT id, name, email, concat(age, ' years') as age FROM users
+    metadata: {}
+  - kind: 2
+    language: vura-terminal
+    value: "!pip3 install pandas pyarrow"
+    metadata: {}
+  - kind: 2
+    language: python
+    value: "import vura_bridge\r
+
+      import pandas as pd\r
+
+      \r
+
+      df = vura_bridge.get_table(\"cell_1\")\r
+
+      for row in df.itertuples():\r
+
+      \    print(row.id, row.name, row.email, row.age)\r
+
+      endline = \"!\"\r
+
+      print(f\"Hello World{endline}\")"
+    metadata: {}
+  - kind: 2
+    language: sql
     value: |-
       -- Step 1: Pull accounts from D365 Mock Server into DuckDB
       SELECT * FROM accounts;
@@ -98,7 +142,8 @@ cells:
       -- Step 4: Sync the processed accounts back to the D365 mock server via
       the external Add-on
 
-      !sync_dataverse --source processed_accounts --target accounts --mode upsert
+      !sync_dataverse --source processed_accounts --target accounts --mode
+      upsert
     metadata: {}
   - kind: 2
     language: json

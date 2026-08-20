@@ -46,6 +46,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+echo "==> Ensuring native vendor binaries are synced"
+node "$ROOT_DIR/scripts/copy-duckdb-vendor.js"
+
 echo "==> Compiling $PKG_NAME"
 (cd "$EXT_DIR" && npm run compile)
 

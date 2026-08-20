@@ -18,3 +18,9 @@ function copyFilesWithExt(srcDir, destDir, ext) {
 
 copyFilesWithExt(path.join(pkgRoot, 'src', 'proto'), path.join(pkgRoot, 'out', 'proto'), '.proto');
 copyFilesWithExt(path.join(pkgRoot, 'src', 'assets'), path.join(pkgRoot, 'out', 'assets'), '.js');
+
+// Sync vendor binaries (e.g. duckdb.node on windows ARM64)
+try {
+    require(path.join(pkgRoot, '..', '..', 'scripts', 'copy-duckdb-vendor.js'));
+} catch (e) { }
+

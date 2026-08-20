@@ -60,9 +60,10 @@ export async function handlePython(
     // One warm worker per (notebook, interpreter) — a different venv gets its own
     // worker rather than reusing a process that imported a different Python.
     const poolKey = `${env.notebookId}:python:${pythonBin}`;
-    const worker = await sidecarPool.acquire(poolKey, () => spawn(pythonBin, [sidecarScript, '--serve'], {
+    const worker = await sidecarPool.acquire(poolKey, () => spawn(pythonBin, ['-u', sidecarScript, '--serve'], {
         cwd: env.notebookDir,
-        env: { ...process.env, VURA_STORAGE_PATH: env.storagePath }
+        env: { ...process.env, VURA_STORAGE_PATH: env.storagePath, PYTHONUNBUFFERED: '1' },
+        windowsHide: true
     }));
 
     try {

@@ -4,18 +4,41 @@ import json
 import os
 import sys
 import traceback
-import pandas as pd
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 class VuraBridgeLibrary:
     def __init__(self, storage_path):
         self.storage_path = storage_path
+
+    def _get_pd_optional(self):
+        global pd
+        if pd is None:
+            try:
+                import pandas as pd
+            except ImportError:
+                pass
+        return pd
+
+    def _get_pd(self):
+        curr_pd = self._get_pd_optional()
+        if curr_pd is None:
+            raise ImportError(
+                "pandas and pyarrow are required for vura_bridge DataFrame operations. "
+                "Install them using: !pip install pandas pyarrow"
+            )
+        return curr_pd
 
     def save(self, variable_name, df):
         if hasattr(self, 'save_automated') and isinstance(df, (dict, list)):
             depth_limit = int(os.environ.get('VURA_DEPTH_LIMIT', '5'))
             return self.save_automated(variable_name, df, depth_limit)
 
-        if not isinstance(df, pd.DataFrame):
+        curr_pd = self._get_pd()
+        if not isinstance(df, curr_pd.DataFrame):
             raise ValueError("Only pandas DataFrames are supported.")
         file_path = os.path.join(self.storage_path, f"{variable_name}.parquet")
         df.to_parquet(file_path, engine='pyarrow')
@@ -24,13 +47,14 @@ class VuraBridgeLibrary:
 
     def load(self, variable_name):
         """Load a saved parquet table as a pandas DataFrame. Alias: get_table()."""
+        curr_pd = self._get_pd()
         file_path = os.path.join(self.storage_path, f"{variable_name}.parquet")
         if not os.path.exists(file_path):
             raise FileNotFoundError(
                 f"Table '{variable_name}' not found. "
                 f"Available tables: {self.list_tables()}"
             )
-        return pd.read_parquet(file_path, engine='pyarrow')
+        return curr_pd.read_parquet(file_path, engine='pyarrow')
 
     # Friendly alias — many users naturally write vura_bridge.save_table(...)
     def save_table(self, variable_name, df):
@@ -131,7 +155,7 @@ class VuraBridgeLibrary:
         for table_name, records in tables.items():
             if not records:
                 continue
-            df = pd.DataFrame(records)
+            df = self._get_pd().DataFrame(records)
             file_path = os.path.join(self.storage_path, f"{table_name}.parquet")
             df.to_parquet(file_path, engine='pyarrow')
             if table_name == variable_name:
@@ -146,7 +170,7 @@ class VuraBridgeLibrary:
             path = os.path.join(self.storage_path, f"{table_name}.parquet")
             if not os.path.exists(path):
                 return []
-            df = pd.read_parquet(path, engine='pyarrow')
+            df = self._get_pd().read_parquet(path, engine='pyarrow')
             # Handle pandas float NaN vs None if needed, but to_dict handles most
             return df.to_dict('records')
 
@@ -215,7 +239,11 @@ def serve_forever(vura_bridge):
         # Fresh globals dict per execution — this is the isolation boundary.
         # Nothing a cell assigns at top level (or via `global`) can be seen by
         # the next request, even though the interpreter process is reused.
-        exec_globals = {'vura_bridge': vura_bridge, 'pd': pd}
+        exec_globals = {'vura_bridge': vura_bridge}
+        curr_pd = vura_bridge._get_pd_optional()
+        if curr_pd is not None:
+            exec_globals['pd'] = curr_pd
+
         try:
             with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
                 exec(code, exec_globals)

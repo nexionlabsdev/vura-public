@@ -84,4 +84,7 @@ if [[ ${#TARBALL_PATHS[@]} -gt 0 ]]; then
   (cd "$PKG_DIR" && npm install --no-save --no-audit --no-fund "${TARBALL_PATHS[@]}")
 fi
 
+node "$ROOT_DIR/scripts/copy-duckdb-vendor.js"
+
 echo "==> Done: packages/$PKG_NAME/node_modules is ready to build"
+

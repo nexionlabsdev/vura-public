@@ -7,3 +7,9 @@ const path = require('path');
 
 const pkgRoot = path.join(__dirname, '..');
 fs.cpSync(path.join(pkgRoot, 'src', 'assets'), path.join(pkgRoot, 'out', 'assets'), { recursive: true });
+
+// Sync vendor binaries (e.g. duckdb.node on windows ARM64)
+try {
+    require(path.join(pkgRoot, '..', '..', 'scripts', 'copy-duckdb-vendor.js'));
+} catch (e) { }
+

@@ -49,7 +49,8 @@ export class VsCodeEnvironment implements IVuraEnvironment {
     }
 
     public async getPythonVenvPath(): Promise<string | undefined> {
-        return this.context.workspaceState.get<string>('vura-notebook-pythonVenv');
+        return this.context.workspaceState.get<string>('vura-notebook-pythonVenv')
+            || this.getConfig<string>('vura.python.venvPath', path.join(this.storagePath, 'venv'));
     }
 
     public async setPythonVenvPath(venvPath: string): Promise<void> {

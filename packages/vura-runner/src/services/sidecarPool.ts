@@ -104,10 +104,26 @@ class SidecarPool {
             }
         });
 
-        proc.on('exit', () => {
+        let startupStderr = '';
+        proc.stderr?.on('data', (chunk) => {
+            startupStderr += chunk.toString();
+        });
+
+        proc.on('error', (err) => {
             for (const p of worker.pending.values()) {
                 clearTimeout(p.timeout);
-                p.reject(new Error('Sidecar process exited unexpectedly'));
+                p.reject(new Error(`Sidecar process failed to start: ${err.message}`));
+            }
+            worker.pending.clear();
+            const remaining = this.pools.get(key);
+            if (remaining) this.pools.set(key, remaining.filter(w => w !== worker));
+        });
+
+        proc.on('exit', (code) => {
+            const errDetail = startupStderr.trim() ? `: ${startupStderr.trim()}` : ` (exit code ${code})`;
+            for (const p of worker.pending.values()) {
+                clearTimeout(p.timeout);
+                p.reject(new Error(`Sidecar process exited unexpectedly${errDetail}`));
             }
             worker.pending.clear();
             const remaining = this.pools.get(key);
@@ -123,6 +139,9 @@ class SidecarPool {
     send(worker: Worker, request: SidecarRequest): Promise<SidecarResponse> {
         const id = request.id ?? randomUUID();
         return new Promise((resolve, reject) => {
+            if (worker.proc.killed || worker.proc.exitCode !== null) {
+                return reject(new Error(`Cannot send request to dead sidecar worker (exit code ${worker.proc.exitCode})`));
+            }
             const timeout = setTimeout(() => {
                 worker.pending.delete(id);
                 reject(new Error('Sidecar execution timed out'));

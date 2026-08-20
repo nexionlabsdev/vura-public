@@ -8,6 +8,10 @@
     "packages/vura-runner",
     "packages/vura-dataverse-runner-plugin"
   ],
+  "scripts": {
+    "postinstall": "node scripts/copy-duckdb-vendor.js",
+    "copy-vendor": "node scripts/copy-duckdb-vendor.js"
+  },
   "dependencies": {
     "@vura-data-os/vura-runner": "^1.0.0"
   }
