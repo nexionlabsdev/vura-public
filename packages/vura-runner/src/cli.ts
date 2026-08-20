@@ -138,20 +138,50 @@ program.command('execute')
             const runner = new VuraRunner(env);
             const logger = new ConsoleLogger(parseInt(options.rows, 10), options.output);
 
-            console.log(`Executing ${cells.length} cells in ${file}...`);
-
-            let cellsToExecute = cells;
             if (options.cell) {
                 const targetIndex = parseInt(options.cell, 10) - 1;
-                cellsToExecute = [cells[targetIndex]];
-            }
+                if (isNaN(targetIndex) || targetIndex < 0 || targetIndex >= cells.length) {
+                    console.error(`Invalid cell index: ${options.cell}. Notebook has ${cells.length} cells.`);
+                    process.exit(1);
+                }
 
-            const result = await runner.executeNotebook(cellsToExecute, logger, process.env as any, {
-                onCellStart: (index) => console.log(`\n--- Executing Cell ${index + 1} (${cellsToExecute[index].language}) ---`)
-            }, doc.requiredPlugins);
+                console.log(`Executing cell ${targetIndex + 1} of ${cells.length} in ${file}...`);
+                console.log(`\n--- Executing Cell ${targetIndex + 1} (${cells[targetIndex].language || 'markdown'}) ---`);
 
-            if (result.status === 'error') {
-                console.error(`\nNotebook execution completed with errors: ${result.error}`);
+                // Load required plugins if specified
+                const { loadPlugins } = require('./pluginLoader');
+                const rawConfiguredPlugins = env.getConfig<string[] | string>('vura.plugins', []);
+                let configuredPlugins: string[] = [];
+                if (Array.isArray(rawConfiguredPlugins)) {
+                    configuredPlugins = rawConfiguredPlugins;
+                } else if (typeof rawConfiguredPlugins === 'string' && rawConfiguredPlugins.trim()) {
+                    try {
+                        const parsed = JSON.parse(rawConfiguredPlugins);
+                        configuredPlugins = Array.isArray(parsed) ? parsed : [rawConfiguredPlugins];
+                    } catch {
+                        configuredPlugins = [rawConfiguredPlugins];
+                    }
+                }
+                const pluginNames = Array.from(new Set([...(doc.requiredPlugins ?? []), ...configuredPlugins]));
+                if (pluginNames.length > 0) {
+                    await loadPlugins(pluginNames, env, logger);
+                }
+
+                if (cells[targetIndex].kind === 2) {
+                    await runner.executeCell(cells[targetIndex], targetIndex, cells, logger);
+                } else {
+                    console.log(`Cell ${targetIndex + 1} is a markdown cell. Skipping.`);
+                }
+            } else {
+                console.log(`Executing ${cells.length} cells in ${file}...`);
+
+                const result = await runner.executeNotebook(cells, logger, process.env as any, {
+                    onCellStart: (index) => console.log(`\n--- Executing Cell ${index + 1} (${cells[index].language}) ---`)
+                }, doc.requiredPlugins);
+
+                if (result.status === 'error') {
+                    console.error(`\nNotebook execution completed with errors: ${result.error}`);
+                }
             }
 
             await logger.saveOutput();

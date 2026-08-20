@@ -5,7 +5,8 @@
   "main": "out/index.js",
   "types": "out/index.d.ts",
   "bin": {
-    "vura-runner": "out/cli.js"
+    "vura-runner": "out/cli.js",
+    "vura": "out/cli.js"
   },
   "files": [
     "out"
@@ -27,6 +28,7 @@
   },
   "scripts": {
     "compile": "tsc -b ./ && node scripts/postbuild.js",
+    "link": "npm link",
     "watch": "tsc -b -w ./",
     "test": "jest",
     "prepublishOnly": "npm run compile"

@@ -1,4 +1,4 @@
-.PHONY: build install build-mac build-linux build-windows build-vura-dataverse-adapter clean
+.PHONY: build install install-runner build-mac build-linux build-windows build-vura-dataverse-adapter clean
 
 # TypeScript compile: npm install (workspace: the 4 library packages) + each
 # package's own `compile` script, in dependency order. core-extension is not
@@ -19,6 +19,12 @@ install:
 	bash ./scripts/install-local-deps.sh core-extension
 	bash ./scripts/package-extension.sh core-extension -o dist/vura-core.vsix
 	code --install-extension dist/vura-core.vsix
+
+# Install the vura-runner package into the global npm space, so that `vura-runner`
+# is available on the command line. This is a prerequisite for running the
+install-runner:
+	cd packages/vura-runner && npm run compile
+	cd packages/vura-runner && npm link
 
 # Platform-specific .vsix bundles. `vsce --target` labels the package for that
 # platform, but the native `duckdb` binary that ends up inside it is whatever
