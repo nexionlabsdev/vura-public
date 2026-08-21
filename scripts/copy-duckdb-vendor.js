@@ -3,22 +3,18 @@ const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
 
-// Vendor duckdb.node is only built for Windows ARM64 (win32-arm64).
-// For all other architectures/platforms, use the default duckdb.node binary installed via npm in node_modules.
-const isWinArm64 = process.platform === 'win32' && process.arch === 'arm64';
-if (!isWinArm64) {
-    console.log(`[vendor-sync] Current platform (${process.platform}-${process.arch}) is not win32-arm64. Skipping vendor duckdb.node copy to use default node_modules binary.`);
-    return;
-}
+// Target platform and architecture (defaults to current process platform/arch, overridable via env vars)
+const targetPlatform = process.env.TARGET_PLATFORM || process.platform;
+const targetArch = process.env.TARGET_ARCH || process.arch;
+const platformArch = `${targetPlatform}-${targetArch}`;
 
-// Candidates for vendor duckdb.node binary
+// Candidates for platform/architecture-specific vendor duckdb.node binary
 const vendorCandidates = [
-    path.join(rootDir, 'vendor-packages', 'duckdb', 'win32-arm64', 'duckdb.node'),
-    path.join(rootDir, 'vendor-packages', 'duckdb', 'duckdb.node'),
-    path.join(rootDir, 'vendor-packages', 'win32-arm64', 'duckdb.node'),
-    path.join(rootDir, 'vendor-packages', 'duckdb.node'),
-    path.join(rootDir, 'vendor', 'packages', 'duckdb', 'win32-arm64', 'duckdb.node'),
-    path.join(rootDir, 'vendor', 'packages', 'duckdb.node'),
+    path.join(rootDir, 'vendor-packages', 'duckdb', platformArch, 'duckdb.node'),
+    path.join(rootDir, 'vendor-packages', platformArch, 'duckdb.node'),
+    path.join(rootDir, 'packages', 'core-extension', 'vendor', 'duckdb-bindings', platformArch, 'duckdb.node'),
+    path.join(rootDir, 'vendor', 'packages', 'duckdb', platformArch, 'duckdb.node'),
+    path.join(rootDir, 'vendor', 'packages', platformArch, 'duckdb.node'),
 ];
 
 let vendorBinaryPath = null;
@@ -30,9 +26,11 @@ for (const cand of vendorCandidates) {
 }
 
 if (!vendorBinaryPath) {
-    console.log('[vendor-sync] No vendor duckdb.node found in vendor-packages/. Skipping.');
+    console.log(`[vendor-sync] No custom vendor duckdb.node found for target ${platformArch}. Using default node_modules binary.`);
     return;
 }
+
+console.log(`[vendor-sync] Found custom vendor duckdb.node for target ${platformArch}: ${path.relative(rootDir, vendorBinaryPath)}`);
 
 // Find all duckdb packages in root and packages/*
 const targetDuckDbDirs = [
