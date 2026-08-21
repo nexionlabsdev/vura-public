@@ -3,6 +3,14 @@ const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
 
+// Vendor duckdb.node is only built for Windows ARM64 (win32-arm64).
+// For all other architectures/platforms, use the default duckdb.node binary installed via npm in node_modules.
+const isWinArm64 = process.platform === 'win32' && process.arch === 'arm64';
+if (!isWinArm64) {
+    console.log(`[vendor-sync] Current platform (${process.platform}-${process.arch}) is not win32-arm64. Skipping vendor duckdb.node copy to use default node_modules binary.`);
+    return;
+}
+
 // Candidates for vendor duckdb.node binary
 const vendorCandidates = [
     path.join(rootDir, 'vendor-packages', 'duckdb', 'win32-arm64', 'duckdb.node'),
@@ -23,7 +31,7 @@ for (const cand of vendorCandidates) {
 
 if (!vendorBinaryPath) {
     console.log('[vendor-sync] No vendor duckdb.node found in vendor-packages/. Skipping.');
-    process.exit(0);
+    return;
 }
 
 // Find all duckdb packages in root and packages/*
