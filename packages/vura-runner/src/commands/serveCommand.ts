@@ -10,6 +10,7 @@ import express from 'express';
 import { EventEmitter } from 'events';
 import swaggerUi from 'swagger-ui-express';
 import { generateSwaggerDoc } from './swaggerGenerator';
+import { parseFlownbContent } from '../utils/flownbLoader';
 
 const eventBus = new EventEmitter();
 const runQueue = new Map<string, Promise<any>>();
@@ -150,7 +151,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 export function startServer(port: number, dir: string, envPath?: string, maxLogSizeMb: number = 5) {
     const app = express();
-    const notebooksDir = path.resolve(process.cwd(), dir);
+    const targetPath = path.resolve(process.cwd(), dir);
+
+    let isSingleFile = false;
+    let notebooksDir = targetPath;
+
+    try {
+        const stat = require('fs').statSync(targetPath);
+        if (stat.isFile()) {
+            isSingleFile = true;
+            notebooksDir = path.dirname(targetPath);
+        }
+    } catch {}
+
     const env = new CliEnvironment(notebooksDir, envPath);
 
     app.use(express.json());
@@ -161,7 +174,7 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
     // Swagger API Docs
     app.get('/api-docs/swagger.json', async (req, res) => {
         try {
-            const doc = await generateSwaggerDoc(notebooksDir);
+            const doc = await generateSwaggerDoc(targetPath);
             res.json(doc);
         } catch (err) {
             console.error('Failed to generate Swagger doc:', err);
@@ -174,31 +187,69 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
         }
     }));
 
+    // Recursive flow scanner
+    async function scanFlows(currentPath: string, baseDir: string): Promise<any[]> {
+        const flows: any[] = [];
+        try {
+            const stat = await fs.stat(currentPath);
+            if (stat.isFile()) {
+                if (currentPath.endsWith('.flownb')) {
+                    const relPath = path.basename(currentPath);
+                    try {
+                        const content = await fs.readFile(currentPath, 'utf8');
+                        const cells = parseFlownbContent(content);
+                        let inputSchema = null;
+                        let outputSchema = null;
+
+                        for (const cell of cells) {
+                            if (cell.language === 'http-input' && cell.value) {
+                                try { inputSchema = JSON.parse(cell.value); } catch {}
+                            }
+                            if (cell.language === 'json' && (cell.metadata?.vura_is_http_output || cell.metadata?.vura_json_output) && cell.value) {
+                                try { outputSchema = JSON.parse(cell.value); } catch {}
+                            }
+                        }
+                        flows.push({ name: relPath, inputSchema, outputSchema });
+                    } catch {}
+                }
+                return flows;
+            }
+
+            const entries = await fs.readdir(currentPath, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(currentPath, entry.name);
+                const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+                if (entry.isDirectory()) {
+                    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'out') continue;
+                    const subFlows = await scanFlows(fullPath, baseDir);
+                    flows.push(...subFlows);
+                } else if (entry.isFile() && entry.name.endsWith('.flownb')) {
+                    try {
+                        const content = await fs.readFile(fullPath, 'utf8');
+                        const cells = parseFlownbContent(content);
+                        let inputSchema = null;
+                        let outputSchema = null;
+
+                        for (const cell of cells) {
+                            if (cell.language === 'http-input' && cell.value) {
+                                try { inputSchema = JSON.parse(cell.value); } catch {}
+                            }
+                            if (cell.language === 'json' && (cell.metadata?.vura_is_http_output || cell.metadata?.vura_json_output) && cell.value) {
+                                try { outputSchema = JSON.parse(cell.value); } catch {}
+                            }
+                        }
+                        flows.push({ name: relPath, inputSchema, outputSchema });
+                    } catch {}
+                }
+            }
+        } catch {}
+        return flows;
+    }
+
     // Endpoints
     app.get('/api/flows', async (req, res) => {
         try {
-            const files = await fs.readdir(notebooksDir);
-            const flows = [];
-            for (const file of files) {
-                if (file.endsWith('.flownb')) {
-                    const content = await fs.readFile(path.join(notebooksDir, file), 'utf8');
-                    const cells = yaml.parse(content) as FlownbCell[];
-                    
-                    let inputSchema = null;
-                    let outputSchema = null;
-
-                    for (const cell of cells) {
-                        if (cell.language === 'http-input' && cell.value) {
-                            try { inputSchema = JSON.parse(cell.value); } catch {}
-                        }
-                        if (cell.language === 'json' && cell.metadata?.vura_json_output && cell.value) {
-                            try { outputSchema = JSON.parse(cell.value); } catch {}
-                        }
-                    }
-
-                    flows.push({ name: file, inputSchema, outputSchema });
-                }
-            }
+            const flows = await scanFlows(targetPath, isSingleFile ? path.dirname(targetPath) : targetPath);
             res.json(flows);
         } catch (e) {
             res.status(500).json({ error: 'Failed to read flows' });
@@ -214,8 +265,9 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
             let query = `SELECT id, flow, arg_max(status, timestamp) as status, max(timestamp) as timestamp, max(duration) as duration FROM execution_history`;
             const params: any[] = [];
             if (flow) {
-                query += ` WHERE flow = ?`;
-                params.push(flow);
+                const basename = path.basename(flow);
+                query += ` WHERE flow = ? OR flow LIKE ? OR flow = ?`;
+                params.push(flow, `%/${flow}`, basename);
             }
             query += ` GROUP BY id, flow ORDER BY timestamp DESC LIMIT 50`;
             
@@ -263,19 +315,23 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
         req.on('close', () => eventBus.removeListener('event', listener));
     });
 
-    app.all('/flow/trigger/:notebookFile', async (req, res) => {
-        const notebookFile = req.params.notebookFile;
-        if (!/^[a-zA-Z0-9._-]+$/.test(notebookFile)) {
-            return res.status(400).json({ error: 'Invalid notebook file name' });
-        }
-        if (!notebookFile.endsWith('.flownb')) {
+    app.all('/flow/trigger/*notebookPath', async (req, res) => {
+        const rawPath = (req.params as any).notebookPath || (req.params as any)[0] || '';
+        const relPath = (Array.isArray(rawPath) ? rawPath.join('/') : String(rawPath)).replace(/\\/g, '/');
+        if (!relPath || !relPath.endsWith('.flownb')) {
             return res.status(400).json({ error: 'Notebook file must end with .flownb' });
         }
 
-        const fullPath = path.join(notebooksDir, notebookFile);
-        try { await fs.access(fullPath); } catch {
-            return res.status(404).json({ error: "Notebook " + notebookFile + " not found in " + notebooksDir });
+        let fullPath = path.resolve(notebooksDir, relPath);
+        if (isSingleFile && (relPath === path.basename(targetPath) || relPath.endsWith('/' + path.basename(targetPath)))) {
+            fullPath = targetPath;
         }
+
+        try { await fs.access(fullPath); } catch {
+            return res.status(404).json({ error: "Notebook " + relPath + " not found in " + notebooksDir });
+        }
+
+        const notebookFile = isSingleFile ? path.basename(targetPath) : relPath;
 
         const runId = Math.random().toString(36).substring(2, 9);
         const startTime = Date.now();
@@ -292,7 +348,7 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
                 const requestEnv = Object.create(env);
 
                 const content = await fs.readFile(fullPath, 'utf8');
-                const cells = yaml.parse(content) as FlownbCell[];
+                const cells = parseFlownbContent(content);
 
                 const runner = new VuraRunner(requestEnv, isolatedDuckDb);
                 const logger = new HttpLogger(runId, notebookFile, maxLogSizeMb);
@@ -422,9 +478,15 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
     // Warm sidecar workers persist across requests (that's the point of the pool) —
     // only reap them on an actual shutdown, not per-request.
     const shutdown = () => {
-        sidecarPool.disposeAll();
-        server.close(() => process.exit(0));
+        console.log("\nShutting down VURA API Server...");
+        try { sidecarPool.disposeAll(); } catch {}
+        if (typeof (server as any).closeAllConnections === 'function') {
+            (server as any).closeAllConnections();
+        }
+        server.close();
+        process.exit(0);
     };
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
+    return server;
 }

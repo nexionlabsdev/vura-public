@@ -9,6 +9,7 @@ build:
 	npm install
 	node ./scripts/copy-duckdb-vendor.js
 	cd packages/core-sdk && npm run compile
+	cd packages/vura-io && npm run compile
 	cd packages/vura-dataverse-sync-core && npm run compile
 	cd packages/vura-runner && npm run compile
 	bash ./scripts/install-local-deps.sh core-extension

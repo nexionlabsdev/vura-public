@@ -12,7 +12,7 @@ const pkgPath = process.argv[2];
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 if (pkg.dependencies) {
   for (const dep of Object.keys(pkg.dependencies)) {
-    if (dep.startsWith('@vura-data-os/')) delete pkg.dependencies[dep];
+    if (dep.startsWith('@vura-data-os/') || dep.startsWith('@vura/')) delete pkg.dependencies[dep];
   }
 }
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');

@@ -2,74 +2,232 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const readline = require('readline');
+const crypto = require('crypto');
 const parquet = require('parquetjs-lite');
 
-class VuraBridgeLibrary {
+class Shredder {
+    static shredJson(datasetName, obj) {
+        const tables = {};
+        const manifest = {
+            dataset_name: datasetName,
+            root_table: datasetName,
+            is_root_array: Array.isArray(obj),
+            tables: {}
+        };
+
+        function uuid() {
+            return crypto.randomUUID();
+        }
+
+        function processNode(node, tableName, parentTable, fieldName, parentId, indexInParent) {
+            if (!manifest.tables[tableName]) {
+                manifest.tables[tableName] = {
+                    table_name: tableName,
+                    parent_table: parentTable,
+                    field_name: fieldName,
+                    node_type: Array.isArray(node) ? 'array' : 'object',
+                    field_order: [],
+                    field_types: {},
+                    children: {}
+                };
+            }
+            const meta = manifest.tables[tableName];
+            if (!tables[tableName]) {
+                tables[tableName] = [];
+            }
+
+            if (Array.isArray(node)) {
+                if (node.length === 0) {
+                    if (!meta.node_type) meta.node_type = 'array';
+                    return;
+                }
+                const isPrimitiveArray = node.some(item => item === null || typeof item !== 'object');
+                if (isPrimitiveArray) {
+                    meta.node_type = 'primitive_array';
+                    for (let i = 0; i < node.length; i++) {
+                        const rowId = uuid();
+                        tables[tableName].push({
+                            _vura_id: rowId,
+                            _vura_parent_id: parentId,
+                            _vura_index: i,
+                            _vura_value: node[i]
+                        });
+                    }
+                    return;
+                }
+
+                if (meta.node_type !== 'primitive_array') {
+                    meta.node_type = 'array';
+                }
+                for (let i = 0; i < node.length; i++) {
+                    processObjectItem(node[i], tableName, parentId, i);
+                }
+            } else if (node && typeof node === 'object') {
+                meta.node_type = 'object';
+                processObjectItem(node, tableName, parentId, indexInParent);
+            }
+        }
+
+        function processObjectItem(item, tableName, parentId, index) {
+            const meta = manifest.tables[tableName];
+            const rowId = uuid();
+            const row = {
+                _vura_id: rowId,
+                _vura_parent_id: parentId,
+                _vura_index: index
+            };
+
+            if (item && typeof item === 'object') {
+                for (const [key, value] of Object.entries(item)) {
+                    if (!meta.field_order.includes(key)) {
+                        meta.field_order.push(key);
+                    }
+
+                    if (value === null || value === undefined) {
+                        meta.field_types[key] = 'null';
+                        row[key] = null;
+                    } else if (typeof value === 'object') {
+                        const childTableName = `${tableName}_${key}`;
+                        meta.field_types[key] = Array.isArray(value) ? 'array' : 'object';
+                        meta.children[key] = childTableName;
+                        processNode(value, childTableName, tableName, key, rowId, 0);
+                    } else {
+                        meta.field_types[key] = typeof value;
+                        row[key] = value;
+                    }
+                }
+            }
+
+            tables[tableName].push(row);
+        }
+
+        processNode(obj, datasetName, null, null, null, 0);
+        const tableNames = Object.keys(manifest.tables);
+
+        return { tables, manifest, tableNames };
+    }
+
+    static unshredJson(manifest, tables) {
+        function reconstructNode(tableName, parentId) {
+            const meta = manifest.tables[tableName];
+            if (!meta) return null;
+
+            const tableRows = (tables[tableName] || []).filter(
+                r => (parentId === null ? (!r._vura_parent_id || r._vura_parent_id === 'null') : r._vura_parent_id === parentId)
+            );
+
+            tableRows.sort((a, b) => (a._vura_index ?? 0) - (b._vura_index ?? 0));
+
+            if (meta.node_type === 'primitive_array') {
+                return tableRows.map(r => r._vura_value);
+            }
+
+            if (meta.node_type === 'array') {
+                return tableRows.map(r => reconstructItem(r, meta));
+            }
+
+            if (tableRows.length === 0) {
+                return null;
+            }
+
+            return reconstructItem(tableRows[0], meta);
+        }
+
+        function reconstructItem(row, meta) {
+            const item = {};
+
+            for (const key of meta.field_order) {
+                if (meta.children[key]) {
+                    const childTableName = meta.children[key];
+                    const childMeta = manifest.tables[childTableName];
+                    const childVal = reconstructNode(childTableName, row._vura_id);
+                    if (childVal === null && childMeta?.node_type === 'array') {
+                        item[key] = [];
+                    } else {
+                        item[key] = childVal;
+                    }
+                } else if (key in row) {
+                    item[key] = row[key];
+                } else {
+                    item[key] = null;
+                }
+            }
+            return item;
+        }
+
+        return reconstructNode(manifest.root_table, null);
+    }
+}
+
+class DataManager {
     constructor(storagePath) {
         this.storagePath = storagePath;
-        // Tracks in-flight calls to this object's own async methods, so the
-        // sidecar's serve loop can tell whether fire-and-forget cell code
-        // (`vura_bridge.save(...).catch(...)` without an `await` — the only
-        // option for top-level async, since cell code is transformed to CJS,
-        // which doesn't support top-level await) has actually finished before
-        // sending the response back, without depending on Node's internal
-        // handle/request counters (which don't reliably track fs.promises-
-        // based I/O, e.g. what parquetjs-lite uses under the hood).
+        this.manifests = new Map();
         this.pendingCalls = new Set();
 
-        // Auto-bind all methods so destructured imports (import { saveNested }) don't lose `this` context
-        const methods = Object.getOwnPropertyNames(VuraBridgeLibrary.prototype).filter(m => m !== 'constructor');
+        const methods = ['put', 'pack', 'get', 'unpack', 'tables'];
         for (const method of methods) {
-            const original = VuraBridgeLibrary.prototype[method];
-            if (typeof original !== 'function') continue;
+            const orig = this[method].bind(this);
             this[method] = (...args) => {
-                const result = original.apply(this, args);
-                if (result && typeof result.then === 'function') {
-                    this.pendingCalls.add(result);
-                    result.finally(() => this.pendingCalls.delete(result));
+                const res = orig(...args);
+                if (res && typeof res.then === 'function') {
+                    this.pendingCalls.add(res);
+                    res.finally(() => this.pendingCalls.delete(res));
                 }
-                return result;
+                return res;
             };
         }
     }
 
-    async save(variableName, dataArray) {
-        if (!Array.isArray(dataArray) || dataArray.length === 0) {
+    getParquetPath(tableName) {
+        return path.join(this.storagePath, `${tableName}.parquet`);
+    }
+
+    emitMapping(variableName, filePath) {
+        process.stderr.write(JSON.stringify({ type: 'vura_io_mapping', variable: variableName, path: filePath }) + '\n');
+    }
+
+    async writeTableParquet(tableName, records) {
+        const filePath = this.getParquetPath(tableName);
+        if (!records || records.length === 0) {
+            const schema = new parquet.ParquetSchema({
+                _vura_id: { type: 'UTF8', optional: true },
+                _vura_parent_id: { type: 'UTF8', optional: true },
+                _vura_index: { type: 'DOUBLE', optional: true },
+                _vura_value: { type: 'UTF8', optional: true }
+            });
+            const writer = await parquet.ParquetWriter.openFile(schema, filePath);
+            await writer.close();
             return;
         }
 
-        const depthLimit = parseInt(process.env.VURA_DEPTH_LIMIT || '5', 10);
-
-        // If the data has nested objects or arrays, use the automated flattener
-        const hasNested = dataArray.some(row => Object.values(row).some(v => v && typeof v === 'object'));
-        if (hasNested && this.save_automated) {
-            return await this.save_automated(variableName, dataArray, depthLimit);
-        }
-
-        const filePath = path.join(this.storagePath, `${variableName}.parquet`);
-
-        // Simple schema inference for parquetjs-lite
         const schemaObj = {};
-        const firstRow = dataArray[0];
-        for (const [key, value] of Object.entries(firstRow)) {
-            if (typeof value === 'number') {
-                schemaObj[key] = { type: 'DOUBLE' };
-            } else if (typeof value === 'boolean') {
-                schemaObj[key] = { type: 'BOOLEAN' };
+        for (const key of Object.keys(records[0])) {
+            let sampleVal = null;
+            for (const row of records) {
+                if (row[key] !== null && row[key] !== undefined) {
+                    sampleVal = row[key];
+                    break;
+                }
+            }
+            if (typeof sampleVal === 'number') {
+                schemaObj[key] = { type: 'DOUBLE', optional: true };
+            } else if (typeof sampleVal === 'boolean') {
+                schemaObj[key] = { type: 'BOOLEAN', optional: true };
             } else {
-                schemaObj[key] = { type: 'UTF8' };
+                schemaObj[key] = { type: 'UTF8', optional: true };
             }
         }
 
         const schema = new parquet.ParquetSchema(schemaObj);
         const writer = await parquet.ParquetWriter.openFile(schema, filePath);
 
-        for (const row of dataArray) {
+        for (const row of records) {
             const cleanRow = {};
             for (const key of Object.keys(schemaObj)) {
-                let val = row[key];
+                const val = row[key];
                 if (val === null || val === undefined) {
-                    cleanRow[key] = schemaObj[key].type === 'UTF8' ? '' : 0;
+                    cleanRow[key] = null;
                 } else if (schemaObj[key].type === 'UTF8') {
                     cleanRow[key] = String(val);
                 } else {
@@ -79,193 +237,156 @@ class VuraBridgeLibrary {
             await writer.appendRow(cleanRow);
         }
         await writer.close();
-
-        process.stderr.write(JSON.stringify({ type: 'vura_bridge_mapping', variable: variableName, path: filePath }) + '\n');
     }
 
-    async load(variableName) {
-        const filePath = path.join(this.storagePath, `${variableName}.parquet`);
+    async readTableParquet(tableName) {
+        const filePath = this.getParquetPath(tableName);
         if (!fs.existsSync(filePath)) {
-            const available = this.list_tables();
-            throw new Error(`Table '${variableName}' not found. Available tables: [${available.join(', ')}]`);
+            return [];
         }
-
         const reader = await parquet.ParquetReader.openFile(filePath);
         const cursor = reader.getCursor();
         const records = [];
         let record = null;
-        while (record = await cursor.next()) {
+        while ((record = await cursor.next())) {
             records.push(record);
         }
         await reader.close();
         return records;
     }
 
-    // Aliases — camelCase and snake_case variants all work
-    async get_table(variableName)           { return this.load(variableName); }
-    async save_table(variableName, data)    { return this.save(variableName, data); }
-    async saveNested(variableName, data)    { return this.save_automated(variableName, Array.isArray(data) ? data : [data]); }
-    async loadReconstructed(variableName)   { return this.load_reconstructed(variableName); }
-    async save_nested(variableName, data)   { return this.saveNested(variableName, data); }
-    async load_reconstructed_alias(n)       { return this.load_reconstructed(n); }
-
-    list_tables() {
-        return fs.readdirSync(this.storagePath)
-            .filter(f => f.endsWith('.parquet'))
-            .map(f => f.replace(/\.parquet$/, ''));
-    }
-
-    async save_automated(variableName, dataArray, depthLimit = 5) {
-        // Implementation provided via Core SDK equivalent or custom logic here
-        // The sidecar is independent of SDK for polyglot execution, so we embed logic
-        const crypto = require('crypto');
-        const uuidv4 = () => crypto.randomUUID();
-
-        const tables = {};
-
-        function traverse(items, currentName, parentId, depth) {
-            if (depth > depthLimit) return;
-            if (!tables[currentName]) tables[currentName] = [];
-
-            for (const item of items) {
-                if (!item || typeof item !== 'object') continue;
-
-                const rowId = uuidv4();
-                const flattenedRow = { Vura_ID: rowId };
-                if (parentId) flattenedRow.Vura_Parent_ID = parentId;
-
-                const metadata = { children: {} };
-
-                for (const [key, value] of Object.entries(item)) {
-                    if (value && typeof value === 'object') {
-                        const childTableName = `${currentName}_${key}`;
-                        metadata.children[key] = {
-                            type: Array.isArray(value) ? 'array' : 'object',
-                            table: childTableName
-                        };
-
-                        if (Array.isArray(value)) {
-                            traverse(value, childTableName, rowId, depth + 1);
-                        } else {
-                            traverse([value], childTableName, rowId, depth + 1);
-                        }
-                    } else {
-                        flattenedRow[key] = value;
-                    }
-                }
-
-                flattenedRow._vura_metadata = JSON.stringify(metadata);
-                tables[currentName].push(flattenedRow);
-            }
-        }
-
-        const arr = Array.isArray(dataArray) ? dataArray : [dataArray];
-        traverse(arr, variableName, null, 1);
+    async pack(name, obj) {
+        const { tables, manifest, tableNames } = Shredder.shredJson(name, obj);
+        this.manifests.set(name, manifest);
 
         for (const [tableName, records] of Object.entries(tables)) {
-            if (records.length === 0) continue;
-            const filePath = path.join(this.storagePath, `${tableName}.parquet`);
+            await this.writeTableParquet(tableName, records);
+            this.emitMapping(tableName, this.getParquetPath(tableName));
 
-            const schemaObj = {};
-            for (const key of Object.keys(records[0])) {
-                let sampleValue = null;
-                for (const row of records) {
-                    if (row[key] !== null && row[key] !== undefined) {
-                        sampleValue = row[key];
-                        break;
-                    }
+            if (tableName.startsWith(`${name}_`)) {
+                const shortKey = tableName.substring(name.length + 1);
+                if (shortKey) {
+                    this.emitMapping(shortKey, this.getParquetPath(tableName));
                 }
-                if (typeof sampleValue === 'number') {
-                    schemaObj[key] = { type: 'DOUBLE', optional: true };
-                } else if (typeof sampleValue === 'boolean') {
-                    schemaObj[key] = { type: 'BOOLEAN', optional: true };
-                } else {
-                    schemaObj[key] = { type: 'UTF8', optional: true };
-                }
-            }
-
-            const schema = new parquet.ParquetSchema(schemaObj);
-            const writer = await parquet.ParquetWriter.openFile(schema, filePath);
-
-            for (const row of records) {
-                const cleanRow = {};
-                for (const key of Object.keys(schemaObj)) {
-                    cleanRow[key] = row[key] === null || row[key] === undefined ? null :
-                                    (schemaObj[key].type === 'UTF8' ? String(row[key]) : row[key]);
-                }
-                await writer.appendRow(cleanRow);
-            }
-            await writer.close();
-
-            if (tableName === variableName) {
-                process.stderr.write(JSON.stringify({ type: 'vura_bridge_mapping', variable: variableName, path: filePath }) + '\n');
             }
         }
+
+        const metaTableName = `__vura_meta_${name}`;
+        const metaRecords = [{ manifest: JSON.stringify(manifest) }];
+        await this.writeTableParquet(metaTableName, metaRecords);
+
+        return tableNames;
     }
 
-    async load_reconstructed(variableName) {
-        const loadTable = async (tableName) => {
-            const filePath = path.join(this.storagePath, `${tableName}.parquet`);
-            if (!fs.existsSync(filePath)) return [];
-            const reader = await parquet.ParquetReader.openFile(filePath);
-            const cursor = reader.getCursor();
-            const records = [];
-            let record = null;
-            while (record = await cursor.next()) records.push(record);
-            await reader.close();
-            return records;
-        };
-
-        const resolveChildren = async (records) => {
-            const resolved = [];
-            for (const record of records) {
-                const rec = { ...record };
-                const vuraId = rec.Vura_ID;
-                delete rec.Vura_ID;
-                delete rec.Vura_Parent_ID;
-
-                let metadata = null;
-                if (rec._vura_metadata) {
-                    try { metadata = JSON.parse(rec._vura_metadata); } catch (e) {}
-                    delete rec._vura_metadata;
-                }
-
-                if (metadata && metadata.children) {
-                    for (const [key, childInfo] of Object.entries(metadata.children)) {
-                        const childRecords = await loadTable(childInfo.table);
-                        const myChildren = childRecords.filter(c => c.Vura_Parent_ID === vuraId);
-                        const resolvedChildren = await resolveChildren(myChildren);
-
-                        if (childInfo.type === 'object') {
-                            rec[key] = resolvedChildren.length > 0 ? resolvedChildren[0] : null;
-                        } else {
-                            rec[key] = resolvedChildren;
-                        }
-                    }
-                }
-                resolved.push(rec);
+    async unpack(name) {
+        let manifest = this.manifests.get(name);
+        if (!manifest) {
+            const metaTableName = `__vura_meta_${name}`;
+            const metaRecords = await this.readTableParquet(metaTableName);
+            if (!metaRecords || metaRecords.length === 0 || !metaRecords[0].manifest) {
+                throw new Error(`Dataset metadata for '${name}' not found.`);
             }
-            return resolved;
+            manifest = JSON.parse(metaRecords[0].manifest);
+            this.manifests.set(name, manifest);
+        }
+
+        const tables = {};
+        for (const tableName of Object.keys(manifest.tables)) {
+            tables[tableName] = await this.readTableParquet(tableName);
+        }
+
+        return Shredder.unshredJson(manifest, tables);
+    }
+
+    async put(name, obj) {
+        const isNested = (val) => {
+            if (!val || typeof val !== 'object') return false;
+            if (Array.isArray(val)) {
+                return val.some(item => item && typeof item === 'object');
+            }
+            return Object.values(val).some(v => v && typeof v === 'object');
         };
 
-        const rootRecords = await loadTable(variableName);
-        if (rootRecords.length === 0) {
-            throw new Error(`Parquet file for variable ${variableName} not found.`);
+        if (isNested(obj)) {
+            return await this.pack(name, obj);
         }
-        return await resolveChildren(rootRecords);
+
+        const records = Array.isArray(obj) ? obj : [obj];
+        await this.writeTableParquet(name, records);
+        const filePath = this.getParquetPath(name);
+        this.emitMapping(name, filePath);
+        return [name];
+    }
+
+    async get(name) {
+        const metaTableName = `__vura_meta_${name}`;
+        const metaPath = this.getParquetPath(metaTableName);
+        if (fs.existsSync(metaPath) || this.manifests.has(name)) {
+            return await this.unpack(name);
+        }
+        return await this.readTableParquet(name);
+    }
+
+    async tables(name) {
+        if (name) {
+            const metaTableName = `__vura_meta_${name}`;
+            const metaRecords = await this.readTableParquet(metaTableName);
+            if (metaRecords && metaRecords.length > 0 && metaRecords[0].manifest) {
+                const manifest = JSON.parse(metaRecords[0].manifest);
+                return Object.keys(manifest.tables);
+            }
+            return [name];
+        }
+
+        if (!fs.existsSync(this.storagePath)) return [];
+        return fs.readdirSync(this.storagePath)
+            .filter(f => f.endsWith('.parquet'))
+            .map(f => f.replace(/\.parquet$/, ''))
+            .filter(f => !f.startsWith('__vura_meta_'));
     }
 }
 
-/**
- * Persistent worker loop: reads one NDJSON request per stdin line, executes
- * the code in a brand-new vm context every time (so no variable/global state
- * ever survives between cell runs — only the process and its already-loaded
- * `require()` modules stay warm), and writes one NDJSON response per line.
- *
- * Request:  {"id": string, "code": string, "filename"?: string, "env"?: {"VURA_DATAVERSE_TOKEN": string, "VURA_DEPTH_LIMIT": string}}
- * Response: {"id": string, "status": "ok"|"error", "stdout": string, "stderr": string, "error"?: string}
- */
-async function serveForever(vura_bridge) {
+class StateManager {
+    constructor() {
+        this.store = new Map();
+    }
+
+    set(key, value) {
+        this.store.set(key, value);
+    }
+
+    get(key, defaultValue = null) {
+        return this.store.has(key) ? this.store.get(key) : defaultValue;
+    }
+
+    get context() {
+        return {
+            storagePath: process.env.VURA_STORAGE_PATH || '',
+            notebookId: process.env.VURA_NOTEBOOK_ID || 'default',
+            depthLimit: parseInt(process.env.VURA_DEPTH_LIMIT || '5', 10),
+            env: process.env
+        };
+    }
+}
+
+class MetricsManager {
+    track(name, value, step = null) {
+        const payload = { type: 'vura_metric', name, value, step, timestamp: Date.now() };
+        process.stderr.write(JSON.stringify(payload) + '\n');
+    }
+
+    log(message, level = 'INFO') {
+        const payload = { type: 'vura_log', level: level.toUpperCase(), message, timestamp: Date.now() };
+        console.log(`[${level.toUpperCase()}] ${message}`);
+    }
+
+    preview(name, sample) {
+        const payload = { type: 'vura_preview', name, sample, timestamp: Date.now() };
+        process.stderr.write(JSON.stringify(payload) + '\n');
+    }
+}
+
+async function serveForever(data, state, metrics) {
     const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
     for await (const line of rl) {
@@ -284,9 +405,7 @@ async function serveForever(vura_bridge) {
         let stderrBuf = '';
         const origStdoutWrite = process.stdout.write.bind(process.stdout);
         const origStderrWrite = process.stderr.write.bind(process.stderr);
-        // Capture everything the cell writes (console.log, vura_bridge's own
-        // stderr markers, etc.) without it interleaving with our NDJSON
-        // control channel on the real stdout.
+
         process.stdout.write = (chunk) => { stdoutBuf += chunk.toString(); return true; };
         process.stderr.write = (chunk) => { stderrBuf += chunk.toString(); return true; };
 
@@ -295,12 +414,9 @@ async function serveForever(vura_bridge) {
         const cellFilename = filename || path.join(process.cwd(), 'cell.js');
 
         try {
-            // esbuild transforms cell code to CJS (see handler), which doesn't
-            // support top-level await — so fire-and-forget async calls like
-            // `doWork().catch(console.error)` are legitimate, not a bug, in
-            // cell code. The wrapper below can't force those to be awaited.
             const wrapped = `(async () => {\n${code}\n})()`;
             const script = new vm.Script(wrapped, { filename: cellFilename });
+            const vuraObj = { io: { data, state, metrics }, data, state, metrics };
             const sandbox = {
                 require, module, exports,
                 __dirname: path.dirname(cellFilename),
@@ -308,22 +424,15 @@ async function serveForever(vura_bridge) {
                 console, process, Buffer,
                 setTimeout, clearTimeout, setInterval, clearInterval, setImmediate,
                 URL, URLSearchParams, TextEncoder, TextDecoder,
-                vura_bridge
+                data, state, metrics,
+                vura: vuraObj
             };
             const context = vm.createContext(sandbox);
             await script.runInContext(context);
 
-            // Safety net for that fire-and-forget code: a fresh spawn-per-cell
-            // process used to mask this entirely — Node won't exit while a
-            // promise chain is still pending, so the parent's "wait for
-            // process exit" accidentally waited for dangling work too. This
-            // process never exits between cells, so there's no such signal
-            // here. Wait for any vura_bridge calls the cell fired without
-            // awaiting to actually finish, up to a bounded cap so a call that
-            // never settles can't hang the whole notebook.
-            for (let i = 0; i < 200 && vura_bridge.pendingCalls.size > 0; i++) {
+            for (let i = 0; i < 200 && data.pendingCalls.size > 0; i++) {
                 await Promise.race([
-                    Promise.allSettled([...vura_bridge.pendingCalls]),
+                    Promise.allSettled([...data.pendingCalls]),
                     new Promise((r) => setTimeout(r, 25))
                 ]);
             }
@@ -348,31 +457,71 @@ async function main() {
         process.exit(1);
     }
 
-    const vura_bridge = new VuraBridgeLibrary(storagePath);
+    const data = new DataManager(storagePath);
+    const state = new StateManager();
+    const metrics = new MetricsManager();
 
-    // Make vura_bridge available as:
-    //   1. global.vura_bridge              → bare `vura_bridge.save(...)` in cell code
-    //   2. require("vura_bridge")          → module import style
-    global.vura_bridge = vura_bridge;
+    const ioModule = {
+        data,
+        state,
+        metrics,
+        put: data.put.bind(data),
+        get: data.get.bind(data),
+        pack: data.pack.bind(data),
+        unpack: data.unpack.bind(data),
+        tables: data.tables.bind(data),
+        saveTable: data.put.bind(data),
+        save_table: data.put.bind(data),
+        getTable: data.get.bind(data),
+        get_table: data.get.bind(data),
+        saveNested: data.pack.bind(data),
+        save_nested: data.pack.bind(data),
+        loadReconstructed: data.unpack.bind(data),
+        load_reconstructed: data.unpack.bind(data),
+    };
+    ioModule.io = ioModule;
+    ioModule.default = ioModule;
+    global.data = data;
+    global.state = state;
+    global.metrics = metrics;
+    global.vura = { io: ioModule, data, state, metrics, ...ioModule };
 
-    // Hook _resolveFilename so Node doesn't throw before reaching require.cache
     const Module = require('module');
     const _origResolve = Module._resolveFilename.bind(Module);
     Module._resolveFilename = function(request, parent, isMain, options) {
-        if (request === 'vura_bridge') return 'vura_bridge';
+        if (
+            request === '@vura/io' ||
+            request === 'vura-io' ||
+            request === 'vura_io' ||
+            request === 'vura_bridge' ||
+            request === 'vura' ||
+            request === 'vura/io'
+        ) {
+            return request;
+        }
         return _origResolve(request, parent, isMain, options);
     };
-    require.cache['vura_bridge'] = {
-        id: 'vura_bridge',
-        filename: 'vura_bridge',
-        loaded: true,
-        exports: vura_bridge,
-        parent: null,
-        children: [],
-        paths: []
+
+    const registerCache = (modName) => {
+        require.cache[modName] = {
+            id: modName,
+            filename: modName,
+            loaded: true,
+            exports: ioModule,
+            parent: null,
+            children: [],
+            paths: []
+        };
     };
 
-    await serveForever(vura_bridge);
+    registerCache('@vura/io');
+    registerCache('vura-io');
+    registerCache('vura_io');
+    registerCache('vura_bridge');
+    registerCache('vura');
+    registerCache('vura/io');
+
+    await serveForever(data, state, metrics);
 }
 
 main();

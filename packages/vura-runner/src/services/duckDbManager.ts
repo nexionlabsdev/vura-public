@@ -18,6 +18,16 @@ function normalizeValue(val: any): any {
         return Number.isSafeInteger(num) ? num : val.toString();
     }
     if (typeof val === 'object') {
+        if (val.entries && typeof val.entries === 'object') {
+            const res: Record<string, any> = {};
+            for (const [k, v] of Object.entries(val.entries)) {
+                res[k] = normalizeValue(v);
+            }
+            return res;
+        }
+        if (Array.isArray(val)) {
+            return val.map(normalizeValue);
+        }
         if (typeof val.scale === 'number' && typeof val.value === 'bigint') {
             return Number(val.value) / Math.pow(10, val.scale);
         }
@@ -31,6 +41,11 @@ function normalizeValue(val: any): any {
         if (typeof val.toJSON === 'function') {
             return val.toJSON();
         }
+        const res: Record<string, any> = {};
+        for (const [k, v] of Object.entries(val)) {
+            res[k] = normalizeValue(v);
+        }
+        return res;
     }
     return val;
 }
@@ -77,6 +92,22 @@ export class DuckDbManager {
         await this.runQuery("PRAGMA memory_limit='1GB'");
         try { await this.runQuery("INSTALL arrow"); } catch {}
         try { await this.runQuery("LOAD arrow"); } catch {}
+
+        await this.syncStorageViews(env);
+    }
+
+    public async syncStorageViews(env: IVuraEnvironment): Promise<void> {
+        if (!env.storagePath) return;
+        try {
+            const files = await fs.readdir(env.storagePath);
+            for (const file of files) {
+                if (file.endsWith('.parquet') && !file.startsWith('__vura_meta_')) {
+                    const tableName = file.replace(/\.parquet$/, '');
+                    const parquetPath = path.join(env.storagePath, file);
+                    await this.updateView(tableName, parquetPath);
+                }
+            }
+        } catch { }
     }
 
     public async runQuery(sql: string, params: any[] = []): Promise<any[]> {

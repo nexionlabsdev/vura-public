@@ -13,8 +13,8 @@ Here's your map to exploring and building on the Vura Data OS. Each pillar below
 1. **[Architecture & IPC](architecture.md)**
    Understand the mechanics of our "Bridge". Learn how the embedded DuckDB instance and Parquet file format create a high-speed, zero-serialization Inter-Process Communication (IPC) layer between different notebook cells.
 
-2. **[Data Management & Auto-Flattener](data_management.md)**
-   Dive deep into the `vura_bridge` (Vura-Bridge) library. Discover how our recursive Auto-Schema Flattener shreds complex nested JSON into relational sub-tables linked by `Vura_Parent_ID`, making it immediately ready for SQL or Pandas manipulation.
+2. **[Data Management & Relational JSON Shredder](data_management.md)**
+   Dive deep into the `@vura/io` and `vura.io` libraries. Discover how our Relational DuckDB JSON Shredder (`data.pack`) shreds complex nested JSON into relational sub-tables linked by `_vura_parent_id`, making it immediately ready for SQL or Pandas manipulation, and losslessly reconstructs it via `data.unpack()`.
 
 3. **[SDK Guide (@vura-data-os/core-sdk)](sdk_guide.md)**
    Ready to extend the platform? Start here to understand the interfaces (`IVuraProvider`, `IConnectionAdapter`) that allow external Add-ons (like custom database connectors) to plug into either the VS Code extension or the CLI.

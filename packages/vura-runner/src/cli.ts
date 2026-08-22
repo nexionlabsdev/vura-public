@@ -85,14 +85,15 @@ program
     .description('CLI to execute VURA .flownb notebooks')
     .version('1.0.0');
 
-program.command('serve')
+program.command('serve [target]')
     .description('Start an HTTP server to trigger .flownb files via API')
     .option('--port <number>', 'Port to run the server on', '3000')
-    .option('--notebooks-dir <path>', 'Directory containing .flownb files', '.')
+    .option('--notebooks-dir <path>', 'Directory containing .flownb files')
     .option('--env <path>', 'Path to .env file')
     .option('--max-log-size <number>', 'Max log/output size in MB per cell before truncation', '5')
-    .action(async (options) => {
-        startServer(parseInt(options.port, 10), options.notebooksDir, options.env, parseInt(options.maxLogSize, 10));
+    .action(async (targetArg, options) => {
+        const target = options.notebooksDir || targetArg || '.';
+        startServer(parseInt(options.port, 10), target, options.env, parseInt(options.maxLogSize, 10));
     });
 
 program.command('execute')

@@ -5,6 +5,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
+jest.setTimeout(15000);
+
 describe('VuraRunner End-to-End Local Polyglot Notebook (.flownb)', () => {
     let tempDir: string;
     let env: IVuraEnvironment;

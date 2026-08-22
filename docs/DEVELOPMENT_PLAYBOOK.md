@@ -27,20 +27,20 @@ CREATE TABLE users AS SELECT * FROM read_csv_auto('sample_users.csv');
 
 **Cell 2 (Python)** — reads that table, transforms it, and saves it back:
 ```python
-from vura_bridge import vura_bridge
+from vura.io import data
 
-df = vura_bridge.get_table("users")
+df = data.get("users")
 df['is_active'] = True
-vura_bridge.save_table(df, "processed_users")
+data.put("processed_users", df)
 ```
 
 **Cell 3 (JavaScript)** — reads the Python cell's output to verify the cross-language bridge:
 ```javascript
-const vura_bridge = require("vura_bridge");
+const { data } = require("@vura/io");
 
 async function run() {
-    const data = await vura_bridge.loadReconstructed("processed_users");
-    console.log(`Successfully verified ${data.length} active users across the IPC boundary.`);
+    const rows = await data.get("processed_users");
+    console.log(`Successfully verified ${rows.length} active users across the IPC boundary.`);
 }
 run();
 ```

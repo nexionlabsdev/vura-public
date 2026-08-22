@@ -19,6 +19,8 @@ import * as arrow from 'apache-arrow';
 import { IVuraEnvironment, ICellLogger, FlownbCell, NotebookExecutionResult, CellExecutionResult } from './interfaces';
 
 export class VuraRunner {
+    private isStoragePrepared = false;
+
     constructor(private env: IVuraEnvironment, private _duckDbInstance?: DuckDbManager) {}
 
     private async _getDuckDb(): Promise<DuckDbManager> {
@@ -81,30 +83,27 @@ export class VuraRunner {
 
     public async injectHttpRequest(requestData: any, logger: ICellLogger) {
         await this.prepareStorage(logger);
-        // Parquet, not JSON — same file-based bridge every other cell type uses.
-        // ParquetUtilities.writeParquet only understands number/boolean/string columns
-        // (anything else becomes String(val), i.e. "[object Object]"), so nested fields
-        // like `query`/`body`/`headers` must be JSON-stringified first — matching what
-        // httpInputHandler.ts already expects (`JSON.parse(requestData.query)` etc).
-        const flattenedRequest: Record<string, any> = {};
-        for (const [key, value] of Object.entries(requestData)) {
-            flattenedRequest[key] = (value !== null && typeof value === 'object')
-                ? JSON.stringify(value)
-                : value;
-        }
 
-        const reqPath = path.join(this.env.storagePath, 'http_request.parquet');
-        await ParquetUtilities.writeParquet(reqPath, [flattenedRequest]);
+        const reqJsonPath = path.join(this.env.storagePath, 'http_request.json');
+        const reqObj = {
+            query: {},
+            body: {},
+            headers: {},
+            method: 'GET',
+            ...(requestData || {})
+        };
+        await fs.writeFile(reqJsonPath, JSON.stringify([reqObj]), 'utf8');
 
-        // Create or replace DuckDB table
+        // Create or replace DuckDB table using read_json_auto so query, body, headers are STRUCTs
         await this.executeSql({
             language: 'sql',
-            value: `CREATE OR REPLACE TABLE http_request AS SELECT * FROM read_parquet('${reqPath.replace(/\\/g, '/')}');`,
+            value: `CREATE OR REPLACE TABLE http_request AS SELECT * FROM read_json_auto('${reqJsonPath.replace(/\\/g, '/')}');`,
             kind: 2
         }, -1, logger);
     }
 
     private async prepareStorage(logger: ICellLogger) {
+        if (this.isStoragePrepared) return;
         if (!this.env.storagePath) {
             throw new Error("Storage path is required to run VURA.");
         }
@@ -129,6 +128,8 @@ export class VuraRunner {
             await VuraRunner.runProcess(npmCmd, ['init', '-y'], this.env.storagePath, logger, process.env, true);
             await VuraRunner.runProcess(npmCmd, ['install', 'apache-arrow', 'parquetjs-lite'], this.env.storagePath, logger, process.env, true);
         }
+
+        this.isStoragePrepared = true;
     }
 
     public static async runProcess(

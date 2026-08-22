@@ -79,7 +79,7 @@ export async function handlePython(
         for (const line of stderrLines) {
             try {
                 const parsed = JSON.parse(line.trim());
-                if (parsed?.type === 'vura_bridge_mapping') {
+                if (parsed?.type === 'vura_io_mapping' || parsed?.type === 'vura_bridge_mapping') {
                     await ContextManager.getInstance().setMapping(env, parsed.variable, parsed.path);
                     continue;
                 }

@@ -6,7 +6,7 @@ Welcome to the deep dive on the Vura Data OS Architecture. This document explore
 
 The true power of the Vura Data OS is its Inter-Process Communication (IPC) layer. Instead of serializing data as JSON strings and piping it between processes (which is slow and memory-intensive for large datasets), we use a high-performance binary bridge based on **DuckDB** and **Parquet files**.
 
-The core extension acts as the orchestrator. When a notebook cell runs, it spawns an isolated sidecar process (Python or Node.js). This sidecar uses our `vura_bridge` (Vura-Bridge) library to save outputs natively as Parquet files into the workspace storage. When the next cell runs—even in a different language—it queries that same Parquet file using DuckDB.
+The core extension acts as the orchestrator. When a notebook cell runs, it spawns an isolated sidecar process (Python or Node.js). This sidecar uses our `@vura/io` / `vura.io` library to save outputs natively into the workspace storage. When the next cell runs—even in a different language—it queries that same dataset using DuckDB.
 
 ### The Polyglot Bridge Sequence
 
@@ -18,7 +18,7 @@ sequenceDiagram
     participant CoreExt as Core Extension (DuckDB)
     participant Storage as File System (Parquet)
     participant PythonCell as Notebook (Python Cell)
-    participant PythonSidecar as Python Sidecar (vura_bridge)
+    participant PythonSidecar as Python Sidecar (vura.io)
 
     %% SQL Cell Execution
     SQLCell->>CoreExt: Execute query against Database
@@ -29,7 +29,7 @@ sequenceDiagram
     %% Python Cell Execution
     PythonCell->>CoreExt: Execute Python script
     CoreExt->>PythonSidecar: Spawn child_process & Pass script
-    PythonSidecar->>PythonSidecar: Execute `vura_bridge.load_table('my_data')`
+    PythonSidecar->>PythonSidecar: Execute `data.get('my_data')`
     PythonSidecar->>Storage: Read `my_data.parquet`
     Storage-->>PythonSidecar: Binary DataFrame
     PythonSidecar->>PythonSidecar: Perform Pandas Analysis

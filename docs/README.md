@@ -10,7 +10,7 @@
 | [Architecture & IPC](architecture.md) | The DuckDB/Parquet Bridge, zero-copy IPC between cells |
 | [Development Playbook](DEVELOPMENT_PLAYBOOK.md) | Local bootstrap, the golden-path test notebook |
 | [Notebook Provider](notebook_provider.md) | Serializer, controller, cell routing, output rendering |
-| [Data Management](data_management.md) | `vura_bridge`, the Auto-Schema Flattener, reconstruction |
+| [Data Management](data_management.md) | `@vura/io` & `vura.io`, Relational DuckDB JSON Shredder, reconstruction |
 | [SDK Guide](sdk_guide.md) | `IVuraProvider`, `IConnectionAdapter`, `BaseAdapter`, Add-on registration for both VS Code and the CLI |
 | [Dataverse Integration](dataverse_integration.md) | `$batch` sync engine, shared between the VS Code Add-on and the CLI plugin |
 | [Troubleshooting Guide](troubleshooting.md) | Decision trees and common failures for the local extension |

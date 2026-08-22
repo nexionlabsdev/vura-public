@@ -1,0 +1,19 @@
+{
+  "name": "@vura/io",
+  "version": "1.0.0",
+  "description": "VURA I/O library for state management, metrics, and DuckDB relational JSON shredding",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "compile": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "parquetjs-lite": "^0.8.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "license": "AGPL-3.0"
+}

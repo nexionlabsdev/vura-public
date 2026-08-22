@@ -133,6 +133,33 @@ body {
     align-items: center;
 }
 
+.top-nav-controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.run-flow-btn {
+    background: var(--accent-color);
+    color: #ffffff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s, background 0.2s;
+}
+
+.run-flow-btn:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+.run-flow-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .status-indicator {
     display: flex;
     align-items: center;

@@ -6,7 +6,8 @@
     "packages/core-sdk",
     "packages/vura-dataverse-sync-core",
     "packages/vura-runner",
-    "packages/vura-dataverse-runner-plugin"
+    "packages/vura-dataverse-runner-plugin",
+    "packages/vura-io"
   ],
   "scripts": {
     "postinstall": "node scripts/copy-duckdb-vendor.js",

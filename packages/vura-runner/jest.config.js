@@ -13,6 +13,7 @@ module.exports = {
   // swap the whole package for a tiny shim under test rather than adding a
   // transform for arbitrary node_modules JS.
   moduleNameMapper: {
+    '^@vura/io$': '<rootDir>/../vura-io/src/index.ts',
     '^uuid$': '<rootDir>/test/mocks/uuidShim.js',
   },
 };

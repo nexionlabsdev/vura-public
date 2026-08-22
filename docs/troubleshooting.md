@@ -58,15 +58,15 @@ code --log trace
 
 Common causes:
 1. **Sidecar not running** — The extension spawns a child process. If it crashes, cells hang.
-2. **Missing `vura_bridge`** — The library isn't installed in the sidecar's Python/Node environment.
-3. **Parquet file not found** — A cell references a variable from a previous cell that wasn't saved.
+2. **Missing `@vura/io` / `vura.io`** — The library isn't installed in the sidecar's Python/Node environment.
+3. **Parquet file not found** — A cell references a variable from a previous cell that wasn't saved via `data.put()`.
 
 ```mermaid
 flowchart TD
     S([Script Cell No Output]) --> Q1{Check Extension Host\nOutput Panel}
     Q1 -->|Spawn error| A1[Check sidecar binary path in\nextension settings]
-    Q1 -->|ModuleNotFoundError vura_bridge| A2[Install: pip install vura-bridge\nor check PYTHONPATH]
-    Q1 -->|FileNotFoundError .parquet| A3[Previous cell must call\nvura_bridge.save_table before\nthis cell reads it]
+    Q1 -->|ModuleNotFoundError vura.io| A2[Install: pip install vura-io\nor check PYTHONPATH]
+    Q1 -->|FileNotFoundError .parquet| A3[Previous cell must call\ndata.put before\nthis cell reads it]
     Q1 -->|No error shown| A4[Enable trace logging:\nextension.ts LOG_LEVEL=debug]
 ```
 
@@ -108,14 +108,14 @@ The zero-copy Parquet IPC approach is orders of magnitude faster than JSON over 
 | Dataset size | Recommended approach | Notes |
 |---|---|---|
 | < 1,000 rows | Either | JSON stdout is fine |
-| 1,000–100,000 rows | `vura_bridge.save_table` | Parquet advantage kicks in |
-| > 100,000 rows | `vura_bridge.save_nested` + DuckDB | Use DuckDB streaming queries |
+| 1,000–100,000 rows | `data.put` | Parquet advantage kicks in |
+| > 100,000 rows | `data.pack` + DuckDB | Use DuckDB streaming queries |
 
 ### DuckDB Query Performance
 
 ```python
 # Inefficient: loads entire Parquet into memory
-df = vura_bridge.get_table("large_dataset")
+df = data.get("large_dataset")
 result = df[df['status'] == 'active']
 
 # Efficient: pushes predicate down to DuckDB scan

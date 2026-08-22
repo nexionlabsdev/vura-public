@@ -45,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-LIB_PACKAGES=(core-sdk vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin)
+LIB_PACKAGES=(core-sdk vura-io vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin)
 
 echo "==> Building library packages"
 (cd "$ROOT_DIR" && npm install --no-audit --no-fund)
@@ -71,10 +71,11 @@ echo "==> Overlaying local @vura-data-os/* siblings actually used by $PKG_NAME"
 # fetch it from the registry.
 TARBALL_PATHS=()
 for lib in "${LIB_PACKAGES[@]}"; do
-  full_name="@vura-data-os/$lib"
-  has_dep="$(node "$ROOT_DIR/scripts/lib/has-dep.js" "$PKG_JSON" "$full_name")"
-  [[ "$has_dep" == "yes" ]] || continue
-
+  if [[ "$lib" == "vura-io" ]]; then
+    full_name="@vura/io"
+  else
+    full_name="@vura-data-os/$lib"
+  fi
   echo "  -- $full_name"
   tgz_name="$(cd "$ROOT_DIR/packages/$lib" && npm pack --silent --pack-destination "$TARBALL_DIR")"
   TARBALL_PATHS+=("$TARBALL_DIR/$tgz_name")

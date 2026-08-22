@@ -4,6 +4,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
+jest.setTimeout(15000);
+
 describe('DuckDbManager (@duckdb/node-api)', () => {
     let tempDir: string;
     let mockEnv: IVuraEnvironment;

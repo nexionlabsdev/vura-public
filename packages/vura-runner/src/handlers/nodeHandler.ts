@@ -21,6 +21,33 @@ function buildVegaLiteHtml(spec: any): string {
 </html>`;
 }
 
+function transformImports(code: string): string {
+    return code.replace(/^(\s*)import\s+(.+?)\s+from\s+(['\"][^'\"]+['\"])\s*;?/gm, (match, indent, clause, mod) => {
+        let result = '';
+        clause = clause.trim();
+        if (clause.startsWith('{') && clause.endsWith('}')) {
+            const destructured = clause.slice(1, -1).split(',').map((s: string) => {
+                const parts = s.trim().split(/\s+as\s+/);
+                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
+            }).join(', ');
+            result = `const { ${destructured} } = require(${mod});`;
+        } else if (clause.startsWith('* as ')) {
+            const alias = clause.replace('* as ', '').trim();
+            result = `const ${alias} = require(${mod});`;
+        } else if (clause.includes('{')) {
+            const [def, rest] = clause.split(/\s*,\s*(?=\{)/);
+            const destructured = rest.slice(1, -1).split(',').map((s: string) => {
+                const parts = s.trim().split(/\s+as\s+/);
+                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
+            }).join(', ');
+            result = `const ${def} = require(${mod}); const { ${destructured} } = require(${mod});`;
+        } else {
+            result = `const ${clause} = require(${mod});`;
+        }
+        return indent + result;
+    }).replace(/^(\s*)import\s+(['\"][^'\"]+['\"])\s*;?/gm, '$1require($2);');
+}
+
 export async function handleNode(
     cell: FlownbCell,
     cellIndex: number,
@@ -41,7 +68,8 @@ export async function handleNode(
     }
 
     let code = codeLines.join('\n');
-    const transformResult = await esbuild.transform(code, { format: 'cjs', target: 'node18' });
+    code = transformImports(code);
+    const transformResult = await esbuild.transform(code, { loader: 'ts', target: 'node18' });
     code = transformResult.code;
 
     // Synthetic __filename/__dirname for the cell — no temp file is written to
@@ -83,7 +111,7 @@ export async function handleNode(
         for (const line of stderrLines) {
             try {
                 const parsed = JSON.parse(line.trim());
-                if (parsed?.type === 'vura_bridge_mapping') {
+                if (parsed?.type === 'vura_io_mapping' || parsed?.type === 'vura_bridge_mapping') {
                     await ContextManager.getInstance().setMapping(env, parsed.variable, parsed.path);
                     continue;
                 }

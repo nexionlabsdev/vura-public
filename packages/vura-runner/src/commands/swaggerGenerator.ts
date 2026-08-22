@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as yaml from 'yaml';
 import { FlownbCell } from '../interfaces';
+import { parseFlownbContent } from '../utils/flownbLoader';
 
 export async function generateSwaggerDoc(notebooksDir: string): Promise<any> {
     const doc: any = {
@@ -18,16 +19,27 @@ export async function generateSwaggerDoc(notebooksDir: string): Promise<any> {
     };
 
     async function scanDirectory(dir: string, baseDir: string) {
-        const entries = await fs.readdir(dir, { withFileTypes: true });
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            const relPath = path.relative(baseDir, fullPath);
-            if (entry.isDirectory()) {
-                await scanDirectory(fullPath, baseDir);
-            } else if (entry.isFile() && entry.name.endsWith('.flownb')) {
-                await processNotebook(fullPath, relPath, doc);
+        try {
+            const stat = await fs.stat(dir);
+            if (stat.isFile()) {
+                if (dir.endsWith('.flownb')) {
+                    const relPath = path.basename(dir);
+                    await processNotebook(dir, relPath, doc);
+                }
+                return;
             }
-        }
+            const entries = await fs.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+                if (entry.isDirectory()) {
+                    if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'out') continue;
+                    await scanDirectory(fullPath, baseDir);
+                } else if (entry.isFile() && entry.name.endsWith('.flownb')) {
+                    await processNotebook(fullPath, relPath, doc);
+                }
+            }
+        } catch {}
     }
 
     await scanDirectory(notebooksDir, notebooksDir);
@@ -38,7 +50,7 @@ export async function generateSwaggerDoc(notebooksDir: string): Promise<any> {
 async function processNotebook(fullPath: string, relPath: string, doc: any) {
     try {
         const content = await fs.readFile(fullPath, 'utf8');
-        const cells = yaml.parse(content) as FlownbCell[];
+        const cells = parseFlownbContent(content);
 
         let summary = path.basename(fullPath);
         let description = '';
