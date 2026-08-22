@@ -45,6 +45,31 @@ cells:
       print(f\"Hello World{endline}\")"
     metadata: {}
   - kind: 2
+    language: javascript
+    value: >-
+      import { saveNested, loadReconstructed } from "vura_bridge";
+
+      import { readFileSync } from "fs";
+
+
+      async function processNestedData() {
+        // Load nested JSON data
+        const rawData = readFileSync("./nested_data.json", "utf8");
+        const complexObject = JSON.parse(rawData);
+
+        // Save complex object (auto-shredded into relational Parquet tables)
+        await saveNested("flattened_products", complexObject);
+        console.log("Nested data saved and flattened.");
+
+        // Reconstruct complex object back from relational tables
+        const reconstructed = await loadReconstructed("flattened_products");
+        console.log("Reconstructed JSON:", JSON.stringify(reconstructed, null, 2));
+      }
+
+
+      processNestedData().catch(console.error);
+    metadata: {}
+  - kind: 2
     language: sql
     value: |-
       -- Step 1: Pull accounts from D365 Mock Server into DuckDB

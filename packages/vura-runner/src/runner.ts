@@ -307,7 +307,7 @@ export class VuraRunner {
             ? `Showing rows 1-${firstPage.length} of ${totalRows}`
             : `${totalRows} row${totalRows !== 1 ? 's' : ''}`;
 
-        const jsonData = JSON.stringify(data)
+        const jsonData = JSON.stringify(data, (k, v) => (typeof v === 'bigint' ? Number(v) : v))
             .replace(/&/g, '\\u0026')
             .replace(/</g, '\\u003c')
             .replace(/>/g, '\\u003e')

@@ -32,23 +32,28 @@ if (!vendorBinaryPath) {
 
 console.log(`[vendor-sync] Found custom vendor duckdb.node for target ${platformArch}: ${path.relative(rootDir, vendorBinaryPath)}`);
 
-// Find all duckdb packages in root and packages/*
+// Find all duckdb and @duckdb/node-bindings packages in root and packages/*
 const targetDuckDbDirs = [
+    path.join(rootDir, 'node_modules', '@duckdb', 'node-bindings'),
+    path.join(rootDir, 'packages', 'core-extension', 'node_modules', '@duckdb', 'node-bindings'),
+    path.join(rootDir, 'packages', 'vura-runner', 'node_modules', '@duckdb', 'node-bindings'),
     path.join(rootDir, 'node_modules', 'duckdb'),
     path.join(rootDir, 'packages', 'core-extension', 'node_modules', 'duckdb'),
     path.join(rootDir, 'packages', 'vura-runner', 'node_modules', 'duckdb'),
-    path.join(rootDir, 'packages', 'core-sdk', 'node_modules', 'duckdb'),
-    path.join(rootDir, 'packages', 'vura-dataverse-sync-core', 'node_modules', 'duckdb'),
 ];
 
-// Also dynamically check any node_modules/duckdb in any package folder
+// Also dynamically check any node_modules/@duckdb/node-bindings or duckdb in any package folder
 const packagesDir = path.join(rootDir, 'packages');
 if (fs.existsSync(packagesDir)) {
     const pkgs = fs.readdirSync(packagesDir);
     for (const pkg of pkgs) {
-        const candidate = path.join(packagesDir, pkg, 'node_modules', 'duckdb');
-        if (!targetDuckDbDirs.includes(candidate)) {
-            targetDuckDbDirs.push(candidate);
+        const candidateNapi = path.join(packagesDir, pkg, 'node_modules', '@duckdb', 'node-bindings');
+        if (!targetDuckDbDirs.includes(candidateNapi)) {
+            targetDuckDbDirs.push(candidateNapi);
+        }
+        const candidateLegacy = path.join(packagesDir, pkg, 'node_modules', 'duckdb');
+        if (!targetDuckDbDirs.includes(candidateLegacy)) {
+            targetDuckDbDirs.push(candidateLegacy);
         }
     }
 }

@@ -42,7 +42,7 @@
     "csv-parser": "^3.2.0",
     "csv-stringify": "^6.7.0",
     "dotenv": "^16.3.1",
-    "duckdb": "^1.4.4",
+    "@duckdb/node-api": "1.5.5-r.4",
     "esbuild": "^0.28.0",
     "exceljs": "^4.4.0",
     "expr-eval": "^2.0.2",

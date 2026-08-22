@@ -1,13 +1,44 @@
 import { IVuraEnvironment } from '../interfaces';
-import * as duckdb from 'duckdb';
+import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as arrow from 'apache-arrow';
 
+if (!(BigInt.prototype as any).toJSON) {
+    (BigInt.prototype as any).toJSON = function () {
+        const num = Number(this);
+        return Number.isSafeInteger(num) ? num : this.toString();
+    };
+}
+
+function normalizeValue(val: any): any {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'bigint') {
+        const num = Number(val);
+        return Number.isSafeInteger(num) ? num : val.toString();
+    }
+    if (typeof val === 'object') {
+        if (typeof val.scale === 'number' && typeof val.value === 'bigint') {
+            return Number(val.value) / Math.pow(10, val.scale);
+        }
+        if (val instanceof Date) return val.toISOString();
+        if (typeof val.micros === 'bigint') {
+            return new Date(Number(val.micros / 1000n)).toISOString();
+        }
+        if (typeof val.days === 'number' || typeof val.months === 'number') {
+            return val.toString();
+        }
+        if (typeof val.toJSON === 'function') {
+            return val.toJSON();
+        }
+    }
+    return val;
+}
+
 export class DuckDbManager {
     private static instances: Map<string, DuckDbManager> = new Map();
-    private db?: duckdb.Database;
-    private connection?: duckdb.Connection;
+    private db?: DuckDBInstance;
+    private connection?: DuckDBConnection;
     private dbPath!: string;
 
     private constructor() { }
@@ -24,13 +55,9 @@ export class DuckDbManager {
 
     public static async createIsolated(): Promise<DuckDbManager> {
         const mgr = new DuckDbManager();
-        await new Promise<void>((resolve, reject) => {
-            mgr.db = new duckdb.Database(':memory:', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-        mgr.connection = mgr.db!.connect();
+        mgr.dbPath = ':memory:';
+        mgr.db = await DuckDBInstance.create(':memory:');
+        mgr.connection = await mgr.db.connect();
         try { await mgr.runQuery("PRAGMA memory_limit='1GB'"); } catch {}
         return mgr;
     }
@@ -43,28 +70,25 @@ export class DuckDbManager {
 
         this.dbPath = path.join(env.storagePath, `staging_${id}.duckdb`);
 
-        await new Promise<void>((resolve, reject) => {
-            this.db = new duckdb.Database(this.dbPath, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
+        this.db = await DuckDBInstance.create(this.dbPath);
+        this.connection = await this.db.connect();
 
-        this.connection = this.db!.connect();
-
-        // Setup limit to 1GB and load Arrow extension
+        // Setup limit to 1GB and load Arrow extension if available
         await this.runQuery("PRAGMA memory_limit='1GB'");
         try { await this.runQuery("INSTALL arrow"); } catch {}
         try { await this.runQuery("LOAD arrow"); } catch {}
     }
 
     public async runQuery(sql: string, params: any[] = []): Promise<any[]> {
-        return new Promise((resolve, reject) => {
-            this.connection!.all(sql, ...params, (err: any, res: any) => {
-                if (err) reject(err);
-                else resolve(res);
-            });
-        });
+        if (!this.connection) {
+            throw new Error("DuckDB connection is not initialized.");
+        }
+        const reader = await this.connection.runAndReadAll(sql, params);
+        const colNames = reader.columnNames();
+        const rows = reader.getRows();
+        return rows.map((r: any[]) =>
+            Object.fromEntries(colNames.map((col, idx) => [col, normalizeValue(r[idx])]))
+        );
     }
 
     // Runs a query and returns Arrow IPC buffer
@@ -76,7 +100,7 @@ export class DuckDbManager {
 
         const table = arrow.tableFromJSON(records);
         const recordBatchStream = arrow.RecordBatchStreamWriter.writeAll(table);
-        const chunks = [];
+        const chunks: Uint8Array[] = [];
         for await (const chunk of recordBatchStream) {
             chunks.push(chunk);
         }
@@ -88,10 +112,6 @@ export class DuckDbManager {
     }
 
     public async saveTableArrowIPC(tableName: string, ipcData: Buffer): Promise<void> {
-        // DuckDB's native node API db.register_buffer can cause a C++ abort trap
-        // due to Arrow JS and Node.js underlying Buffer unalignment differences.
-        // As a highly robust fallback for cross-OS stability, we unpack the Arrow array,
-        // serialize to a quick JSON, and load instantly using DuckDB's blazing fast read_json_auto
         const parsedTable = arrow.tableFromIPC([ipcData]);
         const arr = parsedTable.toArray();
         if (arr.length === 0) return;
@@ -100,10 +120,6 @@ export class DuckDbManager {
         await fs.writeFile(tempJson, JSON.stringify(arr, (k, v) => typeof v === 'bigint' ? Number(v) : v), 'utf8');
 
         try {
-            // DuckDB's IF EXISTS only suppresses "does not exist" errors, not catalog
-            // type mismatches — DROP VIEW on an existing TABLE (or vice versa) still
-            // throws. Guard each drop independently so a stale object from a previous
-            // run of the opposite type doesn't block the CREATE TABLE below.
             try { await this.runQuery(`DROP VIEW IF EXISTS "${tableName}"`); } catch { }
             try { await this.runQuery(`DROP TABLE IF EXISTS "${tableName}"`); } catch { }
             await this.runQuery(`CREATE TABLE "${tableName}" AS SELECT * FROM read_json_auto('${tempJson}')`);
@@ -129,11 +145,16 @@ export class DuckDbManager {
     }
 
     public dispose() {
-        if (this.db) {
-            try { this.db.close(); } catch(e) {}
-        }
         if (this.connection) {
-            // connection close if exposed
+            try {
+                if (typeof (this.connection as any).disconnectSync === 'function') {
+                    (this.connection as any).disconnectSync();
+                }
+            } catch (e) {}
+            this.connection = undefined;
+        }
+        if (this.db) {
+            this.db = undefined;
         }
     }
 }
