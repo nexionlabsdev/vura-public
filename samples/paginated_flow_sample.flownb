@@ -36,13 +36,13 @@ cells:
         range AS id,
         'User_' || range AS username,
         'user' || range || '@example.com' AS email,
-        CAST(1000 + (random() * 9000000) AS INT) AS raw_score,
+        CAST(1000 + (random() * 9000) AS INT) AS raw_score,
         CASE 
           WHEN random() > 0.6 THEN 'Enterprise'
           WHEN random() > 0.3 THEN 'Pro'
           ELSE 'Free'
         END AS plan_tier
-      FROM range(1, 10000001);
+      FROM range(1, 10001);
     metadata:
       group: data-prep
   - kind: 2

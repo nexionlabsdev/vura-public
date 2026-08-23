@@ -104,6 +104,7 @@ export class CliEnvironment implements IVuraEnvironment {
         } catch {
             store[key] = value;
         }
+        this.configMap = store;
         await this.saveConfigStore(store);
     }
 
@@ -120,12 +121,14 @@ export class CliEnvironment implements IVuraEnvironment {
         const store = await this.loadConfigStore();
         if (!(key in store)) return false;
         delete store[key];
+        this.configMap = store;
         await this.saveConfigStore(store);
         return true;
     }
 
     public async setMapping(variable: string, targetPath: string): Promise<void> {
-        // We could implement mapping here if needed
+        const { ContextManager } = require('./services/contextManager');
+        await ContextManager.getInstance().setMapping(this, variable, targetPath);
     }
 
     // --- Generic secret storage (for Add-ons via BaseAdapter) ---

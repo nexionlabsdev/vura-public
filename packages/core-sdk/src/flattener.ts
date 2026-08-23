@@ -10,7 +10,7 @@ export interface FlattenConfig {
 export class AutoSchemaFlattener {
     /**
      * Recursively flattens JSON objects/arrays, extracting nested arrays or objects into sub-tables.
-     * Generates `Vura_Parent_ID` GUIDs for linkage, injects `_vura_metadata`, and saves as Parquet files.
+     * Generates `_vura_parent_id` GUIDs for linkage, injects `_vura_metadata`, and saves as Parquet files.
      *
      * @param data The JSON array or object to flatten
      * @param baseName The base name for the root table (e.g., variable name)
@@ -30,16 +30,29 @@ export class AutoSchemaFlattener {
                 tables[currentName] = [];
             }
 
-            for (const item of items) {
-                if (!item || typeof item !== 'object') continue;
-
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
                 const rowId = uuidv4();
+
+                if (item === null || item === undefined || typeof item !== 'object') {
+                    const primitiveRow: any = {
+                        _vura_id: rowId,
+                        _vura_index: i,
+                        _vura_value: item ?? null
+                    };
+                    if (parentId) {
+                        primitiveRow._vura_parent_id = parentId;
+                    }
+                    tables[currentName].push(primitiveRow);
+                    continue;
+                }
+
                 const flattenedRow: any = {
-                    Vura_ID: rowId,
+                    _vura_id: rowId,
                 };
 
                 if (parentId) {
-                    flattenedRow.Vura_Parent_ID = parentId;
+                    flattenedRow._vura_parent_id = parentId;
                 }
 
                 // Metadata to store reconstruction mapping
@@ -92,7 +105,14 @@ export class AutoSchemaFlattener {
             const resolvedRecords = [];
 
             for (const record of records) {
+                if ('_vura_value' in record) {
+                    resolvedRecords.push(record._vura_value);
+                    continue;
+                }
+
                 const reconstructedObj: any = { ...record };
+                delete reconstructedObj._vura_id;
+                delete reconstructedObj._vura_parent_id;
                 delete reconstructedObj.Vura_ID;
                 delete reconstructedObj.Vura_Parent_ID;
 
@@ -114,7 +134,8 @@ export class AutoSchemaFlattener {
                         try {
                             const childRecords = await ParquetUtilities.readParquet(childFilePath);
                             // Filter children belonging to this record
-                            const myChildren = childRecords.filter(c => c.Vura_Parent_ID === record.Vura_ID);
+                            const parentKey = record._vura_id || record.Vura_ID;
+                            const myChildren = childRecords.filter(c => (c._vura_parent_id || c.Vura_Parent_ID) === parentKey);
 
                             const resolvedChildren = await resolveChildren(myChildren);
 

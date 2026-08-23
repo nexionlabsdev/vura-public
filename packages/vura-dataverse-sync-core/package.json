@@ -39,12 +39,12 @@
     "prepublishOnly": "npm run compile"
   },
   "dependencies": {
-    "@azure/msal-node": "^2.6.4",
-    "@vura-data-os/core-sdk": "^1.0.1",
-    "uuid": "^13.0.2"
+    "@azure/msal-node": "^2.16.2",
+    "@vura-data-os/core-sdk": "^1.0.0",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
-    "@types/node": "^18.19.130",
+    "@types/node": "^18.19.0",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.9.3"
   }

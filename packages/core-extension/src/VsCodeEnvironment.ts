@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as os from 'os';
 import { IVuraEnvironment, SqlProfile, DuckDbManager, ContextManager } from '@vura-data-os/vura-runner';
 import { ConnectionManager } from './connectionManager';
 
@@ -18,9 +19,7 @@ export class VsCodeEnvironment implements IVuraEnvironment {
         private context: vscode.ExtensionContext,
         cellOrDoc?: any
     ) {
-        if (!context.storageUri) {
-            throw new Error("Workspace storage is required to run VURA Notebooks.");
-        }
+        const baseStoragePath = context.storageUri?.fsPath || path.join(os.tmpdir(), 'vura-storage');
         this.extensionPath = context.extensionPath;
 
         const crypto = require('crypto');
@@ -47,11 +46,11 @@ export class VsCodeEnvironment implements IVuraEnvironment {
         if (notebookUri) {
             this.notebookDir = path.dirname(notebookUri.fsPath);
             this.notebookId = crypto.createHash('md5').update(notebookUri.fsPath).digest('hex');
-            this.storagePath = path.join(context.storageUri.fsPath, 'sessions', this.notebookId);
+            this.storagePath = path.join(baseStoragePath, 'sessions', this.notebookId);
         } else {
-            this.notebookDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || context.storageUri.fsPath;
+            this.notebookDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || baseStoragePath;
             this.notebookId = 'global';
-            this.storagePath = path.join(context.storageUri.fsPath, 'global');
+            this.storagePath = path.join(baseStoragePath, 'global');
         }
     }
 

@@ -27,12 +27,8 @@ def shred_json(dataset_name, obj):
         "tables": {}
     }
 
-    id_counter = 0
-
     def next_id():
-        nonlocal id_counter
-        id_counter += 1
-        return str(id_counter)
+        return str(uuid.uuid4())
 
     def process_node(node, table_name, parent_table, field_name, parent_id, index_in_parent):
         if table_name not in manifest["tables"]:
@@ -335,6 +331,149 @@ class DataManager:
             import pyarrow.feather as feather
             return feather.read_feather(file_path)
         return curr_pd.read_parquet(file_path, engine="pyarrow")
+
+    def count(self, name):
+        file_path, fmt = self._find_existing_table_path(name)
+        if not file_path:
+            return 0
+        import pyarrow.parquet as pq
+        return pq.ParquetFile(file_path).metadata.num_rows
+
+    def stream(self, name, batch_size=50000, format='dict'):
+        file_path, fmt = self._find_existing_table_path(name)
+        if not file_path:
+            return
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(file_path)
+        for batch in pf.iter_batches(batch_size=batch_size):
+            if format == 'arrow':
+                yield batch
+            elif format == 'dataframe':
+                curr_pd = self._get_pd()
+                yield curr_pd.DataFrame(batch.to_pydict())
+            else:
+                yield batch.to_pylist()
+
+    def append(self, name, obj):
+        file_path, _ = self._find_existing_table_path(name)
+        if not file_path:
+            return self.put(name, obj)
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        curr_pd = self._get_pd()
+
+        if isinstance(obj, pa.Table):
+            new_table = obj
+        elif isinstance(obj, curr_pd.DataFrame):
+            new_table = pa.Table.from_pandas(obj)
+        elif isinstance(obj, list):
+            new_table = pa.Table.from_pylist(obj)
+        else:
+            new_table = pa.Table.from_pandas(curr_pd.DataFrame([obj]))
+
+        existing_table = pq.read_table(file_path)
+        combined_table = pa.concat_tables([existing_table, new_table])
+        parquet_path = self._get_table_path(name, 'parquet')
+        pq.write_table(combined_table, parquet_path)
+        self._emit_mapping(name, parquet_path)
+        return [name]
+
+    def update(self, name, obj, on):
+        file_path, _ = self._find_existing_table_path(name)
+        if not file_path:
+            raise FileNotFoundError(f"Table '{name}' does not exist to update.")
+
+        keys = [on] if isinstance(on, str) else list(on)
+        if not keys:
+            raise ValueError("Update requires at least one key in 'on'.")
+
+        import duckdb
+        conn = duckdb.connect()
+        curr_pd = self._get_pd()
+        import pyarrow as pa
+
+        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
+            stage_df = obj.to_pandas() if isinstance(obj, pa.Table) else obj
+        elif isinstance(obj, list):
+            stage_df = curr_pd.DataFrame(obj)
+        else:
+            stage_df = curr_pd.DataFrame([obj])
+
+        safe_file_path = file_path.replace("\\", "/")
+        conn.register("stage_df", stage_df)
+        conn.execute(f"CREATE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+
+        stage_cols = list(stage_df.columns)
+        non_key_cols = [c for c in stage_cols if c not in keys]
+
+        if non_key_cols:
+            set_clause = ", ".join([f'"{c}" = s."{c}"' for c in non_key_cols])
+            join_cond = " AND ".join([f't."{k}" = s."{k}"' for k in keys])
+            conn.execute(f"""
+                UPDATE target_tbl AS t
+                SET {set_clause}
+                FROM stage_df AS s
+                WHERE {join_cond}
+            """)
+
+        parquet_path = self._get_table_path(name, 'parquet')
+        safe_target = parquet_path.replace("\\", "/")
+        conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
+        conn.close()
+
+        self._emit_mapping(name, parquet_path)
+        return [name]
+
+    def upsert(self, name, obj, on):
+        file_path, _ = self._find_existing_table_path(name)
+        if not file_path:
+            return self.put(name, obj)
+
+        keys = [on] if isinstance(on, str) else list(on)
+        if not keys:
+            raise ValueError("Upsert requires at least one key in 'on'.")
+
+        import duckdb
+        conn = duckdb.connect()
+        curr_pd = self._get_pd()
+        import pyarrow as pa
+
+        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
+            stage_df = obj.to_pandas() if isinstance(obj, pa.Table) else obj
+        elif isinstance(obj, list):
+            stage_df = curr_pd.DataFrame(obj)
+        else:
+            stage_df = curr_pd.DataFrame([obj])
+
+        safe_file_path = file_path.replace("\\", "/")
+        conn.register("stage_df", stage_df)
+        conn.execute(f"CREATE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+
+        stage_cols = list(stage_df.columns)
+        non_key_cols = [c for c in stage_cols if c not in keys]
+
+        join_cond = " AND ".join([f't."{k}" = s."{k}"' for k in keys])
+        update_set_clause = ", ".join([f'"{c}" = s."{c}"' for c in non_key_cols])
+        insert_cols_clause = ", ".join([f'"{c}"' for c in stage_cols])
+        insert_vals_clause = ", ".join([f's."{c}"' for c in stage_cols])
+
+        update_part = f"WHEN MATCHED THEN UPDATE SET {update_set_clause}" if non_key_cols else ""
+
+        conn.execute(f"""
+            MERGE INTO target_tbl AS t
+            USING stage_df AS s
+            ON {join_cond}
+            {update_part}
+            WHEN NOT MATCHED THEN INSERT ({insert_cols_clause}) VALUES ({insert_vals_clause})
+        """)
+
+        parquet_path = self._get_table_path(name, 'parquet')
+        safe_target = parquet_path.replace("\\", "/")
+        conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
+        conn.close()
+
+        self._emit_mapping(name, parquet_path)
+        return [name]
 
     def tables(self, name=None):
         if name:

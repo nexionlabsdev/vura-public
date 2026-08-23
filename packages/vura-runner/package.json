@@ -34,13 +34,13 @@
     "prepublishOnly": "npm run compile"
   },
   "dependencies": {
-    "@azure/msal-node": "^2.6.4",
+    "@azure/msal-node": "^2.16.2",
     "@duckdb/node-api": "^1.5.5-r.4",
     "@vura-data-os/core-sdk": "^1.0.0",
     "@vura/io": "^1.0.0",
-    "ajv": "^6.15.0",
+    "ajv": "^8.17.1",
     "apache-arrow": "^21.2.0",
-    "commander": "^11.0.0",
+    "commander": "^13.1.0",
     "csv-parser": "^3.2.0",
     "csv-stringify": "^6.7.0",
     "dotenv": "^16.3.1",
@@ -53,14 +53,14 @@
     "parquetjs-lite": "^0.8.7",
     "puppeteer-core": "^24.42.0",
     "swagger-ui-express": "^5.0.1",
-    "uuid": "^13.0.0",
+    "uuid": "^11.1.0",
     "yaml": "^2.8.4"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/mssql": "^12.3.0",
-    "@types/node": "18.x",
+    "@types/node": "^18.19.0",
     "@types/nunjucks": "^3.2.6",
     "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^10.0.0",

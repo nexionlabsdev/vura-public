@@ -278,6 +278,7 @@ export class DuckDbManager {
         const readQuery = filePath.endsWith('.arrow')
             ? `read_ipc('${safePath}')`
             : `read_parquet('${safePath}')`;
+        try { await this.runQuery(`DROP TABLE IF EXISTS "${viewName}";`); } catch {}
         const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM ${readQuery};`;
         await this.runQuery(sql);
     }

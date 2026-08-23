@@ -22,30 +22,12 @@ function buildVegaLiteHtml(spec: any): string {
 }
 
 function transformImports(code: string): string {
-    return code.replace(/^(\s*)import\s+(.+?)\s+from\s+(['\"][^'\"]+['\"])\s*;?/gm, (match, indent, clause, mod) => {
-        let result = '';
-        clause = clause.trim();
-        if (clause.startsWith('{') && clause.endsWith('}')) {
-            const destructured = clause.slice(1, -1).split(',').map((s: string) => {
-                const parts = s.trim().split(/\s+as\s+/);
-                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
-            }).join(', ');
-            result = `const { ${destructured} } = require(${mod});`;
-        } else if (clause.startsWith('* as ')) {
-            const alias = clause.replace('* as ', '').trim();
-            result = `const ${alias} = require(${mod});`;
-        } else if (clause.includes('{')) {
-            const [def, rest] = clause.split(/\s*,\s*(?=\{)/);
-            const destructured = rest.slice(1, -1).split(',').map((s: string) => {
-                const parts = s.trim().split(/\s+as\s+/);
-                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
-            }).join(', ');
-            result = `const ${def} = require(${mod}); const { ${destructured} } = require(${mod});`;
-        } else {
-            result = `const ${clause} = require(${mod});`;
-        }
-        return indent + result;
-    }).replace(/^(\s*)import\s+(['\"][^'\"]+['\"])\s*;?/gm, '$1require($2);');
+    try {
+        const result = esbuild.transformSync(code, { loader: 'ts', format: 'cjs' });
+        return result.code;
+    } catch {
+        return code;
+    }
 }
 
 export async function handleNode(

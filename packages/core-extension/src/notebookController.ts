@@ -122,6 +122,24 @@ export class NotebookController {
             const logger = new VsCodeCellLogger(execution);
             const runner = new VuraRunner(env);
 
+            const { loadPlugins } = require('@vura-data-os/vura-runner');
+            const rawConfiguredPlugins = env.getConfig<string[] | string>('vura.plugins', []);
+            let configuredPlugins: string[] = [];
+            if (Array.isArray(rawConfiguredPlugins)) {
+                configuredPlugins = rawConfiguredPlugins;
+            } else if (typeof rawConfiguredPlugins === 'string' && rawConfiguredPlugins.trim()) {
+                try {
+                    const parsed = JSON.parse(rawConfiguredPlugins);
+                    configuredPlugins = Array.isArray(parsed) ? parsed : [rawConfiguredPlugins];
+                } catch {
+                    configuredPlugins = [rawConfiguredPlugins];
+                }
+            }
+            const pluginNames = Array.from(new Set([...(cell.metadata?.requiredPlugins || []), ...configuredPlugins]));
+            if (pluginNames.length > 0) {
+                await loadPlugins(pluginNames, env, logger);
+            }
+
             const flownbCell: FlownbCell = {
                 kind: cell.kind === vscode.NotebookCellKind.Code ? 2 : 1,
                 language: cell.document.languageId,
@@ -221,7 +239,7 @@ export class NotebookController {
                         const child_process = require('child_process');
                         await new Promise<void>((resolve, reject) => {
                             const child = child_process.spawn(shellCommand, { 
-                                cwd: this.context.storageUri!.fsPath, 
+                                cwd: env.storagePath, 
                                 env: envToUse, 
                                 shell: true 
                             });

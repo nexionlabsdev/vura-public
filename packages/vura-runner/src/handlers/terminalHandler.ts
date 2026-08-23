@@ -20,6 +20,13 @@ export async function handleTerminal(
         if (trimmed.startsWith('!')) {
             const commandRoot = trimmed.split(' ')[0];
 
+            if (commandRoot === '!clean_session' || commandRoot === '!clean-session') {
+                const { cleanNotebookSession } = require('../runner');
+                await cleanNotebookSession(env);
+                await logger.logText('Notebook session cleaned successfully.');
+                continue;
+            }
+
             if (commandRoot === '!ingest-file') {
                 const match = trimmed.match(
                     /^!ingest-file\s+"([^"]+)"\s+(csv|excel|parquet|json)(?:\s+"([^"]+)")?\s+->\s+([^\s]+)$/
