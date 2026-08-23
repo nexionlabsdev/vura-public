@@ -429,8 +429,10 @@ export async function startServer(port: number, dir: string, envPath?: string, m
         const startTime = Date.now();
 
         const executeRun = async () => {
+            const mark0 = Date.now();
             broadcastEvent('run_started', { id: runId, flow: notebookFile });
             await logHistoryToDuckDb(env, runId, notebookFile, 'running', null);
+            const mark1 = Date.now();
 
             const httpRequestContext = { query: req.query, body: req.body || {}, headers: req.headers, method: req.method };
             let sessionDuckDb: DuckDbManager | null = null;
@@ -441,10 +443,12 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                 await fs.mkdir(runStoragePath, { recursive: true });
                 const mainDuckDb = await DuckDbManager.getInstance(env);
                 sessionDuckDb = await mainDuckDb.connectSession(schemaName);
+                const mark2 = Date.now();
 
                 const requestEnv = Object.create(env);
                 requestEnv.storagePath = runStoragePath;
                 await prepareStorageWorkspace(requestEnv);
+                const mark3 = Date.now();
 
                 let cells: FlownbCell[];
                 const manifestEntry = activeManifest?.notebooks[relPath];
@@ -459,21 +463,23 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                 const logger = new HttpLogger(runId, notebookFile, maxLogSizeMb);
 
                 await runner.injectHttpRequest(httpRequestContext, logger);
+                const mark4 = Date.now();
 
-            let finalResponse: any = null;
+                let finalResponse: any = null;
 
-            const execResult = await withTimeout(runner.executeNotebook(cells, logger, process.env as any, {
-                onCellStart: (i, total) => {
-                    broadcastEvent('cell_started', { runId, flow: notebookFile, cellIndex: i, totalCells: total });
-                    logger.setCellIndex(i);
-                },
-                onCellEnd: (i, result) => {
-                    const cellError = result.error;
-                    const cellStatus = result.status;
-                    const cellDuration = result.durationMs;
-                    logCellToDuckDb(env, runId, notebookFile, i, cellStatus, cellDuration, JSON.stringify(logger.currentCellLogs), JSON.stringify(logger.currentCellOutputs), cellError).catch(() => {});
-                }
-            }), EXECUTION_TIMEOUT_MS);
+                const execResult = await withTimeout(runner.executeNotebook(cells, logger, process.env as any, {
+                    onCellStart: (i, total) => {
+                        broadcastEvent('cell_started', { runId, flow: notebookFile, cellIndex: i, totalCells: total });
+                        logger.setCellIndex(i);
+                    },
+                    onCellEnd: (i, result) => {
+                        const cellError = result.error;
+                        const cellStatus = result.status;
+                        const cellDuration = result.durationMs;
+                        logCellToDuckDb(env, runId, notebookFile, i, cellStatus, cellDuration, JSON.stringify(logger.currentCellLogs), JSON.stringify(logger.currentCellOutputs), cellError).catch(() => {});
+                    }
+                }), EXECUTION_TIMEOUT_MS);
+
 
             if (execResult.httpOutputCell) {
                 const cell = execResult.httpOutputCell;

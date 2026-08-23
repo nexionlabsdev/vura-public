@@ -125,4 +125,69 @@ describe('VURA I/O & Relational DuckDB JSON Shredder', () => {
         spyErr.mockRestore();
         spyLog.mockRestore();
     });
+
+    test('data.stream() yields data in chunks', async () => {
+        const records = Array.from({ length: 15 }, (_, i) => ({ id: i + 1, val: `item_${i + 1}` }));
+        await data.put('stream_test', records);
+
+        const chunks: any[][] = [];
+        for await (const chunk of data.stream('stream_test', { batchSize: 5 })) {
+            chunks.push(chunk);
+        }
+
+        expect(chunks).toHaveLength(3);
+        expect(chunks[0]).toHaveLength(5);
+        expect(chunks[0][0].id).toBe(1);
+        expect(chunks[2][4].id).toBe(15);
+    });
+
+    test('data.append() appends new records without overwriting existing data', async () => {
+        await data.put('append_test', [{ id: 1, name: 'Alice' }]);
+        await data.append('append_test', [{ id: 2, name: 'Bob' }]);
+
+        const result = await data.get('append_test');
+        expect(result).toHaveLength(2);
+        expect(result[0].name).toBe('Alice');
+        expect(result[1].name).toBe('Bob');
+    });
+
+    test('data.update() updates matching rows using single or composite keys', async () => {
+        const initial = [
+            { id: 101, org: 'A', status: 'Pending', score: 50 },
+            { id: 102, org: 'A', status: 'Pending', score: 60 },
+            { id: 101, org: 'B', status: 'Pending', score: 70 }
+        ];
+        await data.put('update_test', initial);
+
+        // Update with composite key ['id', 'org']
+        await data.update('update_test', [
+            { id: 101, org: 'A', status: 'Verified', score: 99 }
+        ], { on: ['id', 'org'] });
+
+        const updated = await data.get('update_test');
+        const targetRow = updated.find((r: any) => r.id === 101 && r.org === 'A');
+        const otherRow = updated.find((r: any) => r.id === 101 && r.org === 'B');
+
+        expect(targetRow.status).toBe('Verified');
+        expect(targetRow.score).toBe(99);
+        expect(otherRow.status).toBe('Pending');
+    });
+
+    test('data.upsert() updates matched rows and inserts missing rows with composite keys', async () => {
+        const initial = [
+            { id: 1, tenant: 'T1', role: 'User' }
+        ];
+        await data.put('upsert_test', initial);
+
+        await data.upsert('upsert_test', [
+            { id: 1, tenant: 'T1', role: 'Admin' },
+            { id: 2, tenant: 'T1', role: 'Manager' }
+        ], { on: ['id', 'tenant'] });
+
+        const result = await data.get('upsert_test');
+        expect(result).toHaveLength(2);
+        expect(result.find((r: any) => r.id === 1).role).toBe('Admin');
+        expect(result.find((r: any) => r.id === 2).role).toBe('Manager');
+    });
 });
+

@@ -36,13 +36,13 @@ cells:
         range AS id,
         'User_' || range AS username,
         'user' || range || '@example.com' AS email,
-        CAST(1000 + (random() * 9000) AS INT) AS raw_score,
+        CAST(1000 + (random() * 9000000) AS INT) AS raw_score,
         CASE 
           WHEN random() > 0.6 THEN 'Enterprise'
           WHEN random() > 0.3 THEN 'Pro'
           ELSE 'Free'
         END AS plan_tier
-      FROM range(1, 10001);
+      FROM range(1, 10000001);
     metadata:
       group: data-prep
   - kind: 2
@@ -63,27 +63,31 @@ cells:
   - kind: 2
     language: javascript
     value: >-
-      // Step 3: JS cell to manipulate data via @vura/io
+      // Step 3: JS cell to manipulate data via @vura/io in streaming batches
 
       import { data } from "@vura/io";
 
 
       async function processInJs() {
-        const records = await data.get("python_processed");
-        console.log(`JS received ${records.length} records from Python processing.`);
+        let totalProcessed = 0;
         
-        const enriched = records.map(r => ({
-          ...r,
-          is_high_tier: r.plan_tier === "Enterprise" || r.plan_tier === "Pro",
-          audit_tag: `JS_AUDITED_${Date.now()}`
-        }));
-        
-        await data.put("final_dataset", enriched);
-        console.log("JS data enrichment complete. Saved to 'final_dataset'.");
+        // Stream dataset in chunks of 100,000 to keep memory footprint under 30MB
+        for await (const batch of data.stream("python_processed", { batchSize: 100000 })) {
+          const enrichedBatch = batch.map(r => ({
+            ...r,
+            is_high_tier: r.plan_tier === "Enterprise" || r.plan_tier === "Pro",
+            audit_tag: `JS_AUDITED_${Date.now()}`
+          }));
+
+          await data.append("final_dataset", enrichedBatch);
+          totalProcessed += batch.length;
+        }
+
+        console.log(`JS data enrichment complete. Processed and saved ${totalProcessed} records to 'final_dataset'.`);
       }
 
 
-      processInJs().catch(console.error);
+      await processInJs();
     metadata:
       group: data-prep
   - kind: 2

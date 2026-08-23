@@ -69,8 +69,10 @@ export async function handleNode(
 
     let code = codeLines.join('\n');
     code = transformImports(code);
-    const transformResult = await esbuild.transform(code, { loader: 'ts', target: 'node18' });
-    code = transformResult.code;
+    if (/:\s*[A-Z]|interface\s+|type\s+|as\s+[A-Z]/.test(code)) {
+        const transformResult = await esbuild.transform(code, { loader: 'ts', target: 'node18' });
+        code = transformResult.code;
+    }
 
     // Synthetic __filename/__dirname for the cell — no temp file is written to
     // disk anymore, the code goes straight to the warm worker over stdin.

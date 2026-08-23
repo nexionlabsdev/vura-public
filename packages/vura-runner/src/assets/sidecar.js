@@ -198,7 +198,7 @@ class DataManager {
         this.manifests = new Map();
         this.pendingCalls = new Set();
 
-        const methods = ['put', 'pack', 'get', 'unpack', 'tables'];
+        const methods = ['put', 'pack', 'get', 'unpack', 'tables', 'count', 'stream', 'append', 'update', 'upsert'];
         for (const method of methods) {
             const orig = this[method].bind(this);
             this[method] = (...args) => {
@@ -261,22 +261,87 @@ class DataManager {
     }
 
     async writeTableData(tableName, records) {
-        const recordsToWrite = (!records || records.length === 0)
-            ? [{ _vura_id: null, _vura_parent_id: null, _vura_index: null, _vura_value: null }]
-            : records;
+        let rawRecords;
+        if (records && typeof records === 'object' && (records.constructor?.name === 'Table' || typeof records.toArray === 'function')) {
+            rawRecords = records.toArray();
+        } else {
+            rawRecords = (!records || (Array.isArray(records) && records.length === 0))
+                ? [{ _vura_id: null, _vura_parent_id: null, _vura_index: null, _vura_value: null }]
+                : (Array.isArray(records) ? records : [records]);
+        }
 
-        const jsonStr = JSON.stringify(recordsToWrite, (k, v) => typeof v === 'bigint' ? Number(v) : v);
-        const parquetPath = this.getTablePath(tableName, 'parquet');
+        const schemaMap = {};
+        for (const r of rawRecords) {
+            if (r && typeof r === 'object') {
+                for (const [k, v] of Object.entries(r)) {
+                    if (!schemaMap[k] || schemaMap[k] === 'VARCHAR') {
+                        if (v === null || v === undefined) {
+                            if (!schemaMap[k]) schemaMap[k] = 'VARCHAR';
+                        } else if (typeof v === 'boolean') {
+                            schemaMap[k] = 'BOOLEAN';
+                        } else if (typeof v === 'number') {
+                            schemaMap[k] = Number.isInteger(v) ? 'BIGINT' : 'DOUBLE';
+                        } else if (typeof v === 'bigint') {
+                            schemaMap[k] = 'BIGINT';
+                        } else if (v instanceof Date) {
+                            schemaMap[k] = 'TIMESTAMP';
+                        } else {
+                            schemaMap[k] = 'VARCHAR';
+                        }
+                    } else if (schemaMap[k] === 'BIGINT' && typeof v === 'number' && !Number.isInteger(v)) {
+                        schemaMap[k] = 'DOUBLE';
+                    }
+                }
+            }
+        }
+
+        if (Object.keys(schemaMap).length === 0) {
+            schemaMap['_vura_value'] = 'VARCHAR';
+        }
+
         const conn = await this.getDuckDbConn();
-        const tempJson = path.join(this.currentStoragePath, `_temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.json`);
-        await fs.promises.writeFile(tempJson, jsonStr, 'utf8');
+        const tempTableName = `_temp_write_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const colDefs = Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ');
+        await conn.runAndReadAll(`CREATE TEMP TABLE "${tempTableName}" (${colDefs})`);
 
-        try {
-            const safeTemp = tempJson.replace(/\\/g, '/');
-            const safeTarget = parquetPath.replace(/\\/g, '/');
-            await conn.runAndReadAll(`COPY (SELECT * FROM read_json_auto('${safeTemp}')) TO '${safeTarget}' (FORMAT PARQUET)`);
-        } finally {
-            await fs.promises.unlink(tempJson).catch(() => {});
+        const appender = await conn.createAppender(tempTableName, 'main');
+        const keys = Object.keys(schemaMap);
+
+        for (const r of rawRecords) {
+            for (const k of keys) {
+                const val = r ? r[k] : null;
+                const type = schemaMap[k];
+                if (val === null || val === undefined) {
+                    appender.appendNull();
+                } else if (type === 'BIGINT') {
+                    if (typeof val === 'number' && !Number.isInteger(val)) {
+                        appender.appendDouble(val);
+                    } else {
+                        appender.appendBigInt(BigInt(Math.trunc(Number(val))));
+                    }
+                } else if (type === 'DOUBLE') {
+                    appender.appendDouble(Number(val));
+                } else if (type === 'BOOLEAN') {
+                    appender.appendBoolean(Boolean(val));
+                } else if (type === 'TIMESTAMP' && val instanceof Date) {
+                    appender.appendVarchar(val.toISOString());
+                } else {
+                    appender.appendVarchar(typeof val === 'object' ? JSON.stringify(val) : String(val));
+                }
+            }
+            appender.endRow();
+        }
+        appender.flushSync();
+        appender.closeSync();
+
+        const parquetPath = this.getTablePath(tableName, 'parquet');
+        const safeTarget = parquetPath.replace(/\\/g, '/');
+        await conn.runAndReadAll(`COPY "${tempTableName}" TO '${safeTarget}' (FORMAT PARQUET)`);
+        await conn.runAndReadAll(`DROP TABLE IF EXISTS "${tempTableName}"`);
+
+        const legacyArrow = this.getTablePath(tableName, 'arrow');
+        if (fs.existsSync(legacyArrow)) {
+            await fs.promises.unlink(legacyArrow).catch(() => {});
         }
 
         return parquetPath;
@@ -289,7 +354,7 @@ class DataManager {
         const conn = await this.getDuckDbConn();
         const safePath = tableInfo.filePath.replace(/\\/g, '/');
         let readQuery = tableInfo.format === 'arrow'
-            ? `SELECT * FROM read_ipc('${safePath}')`
+            ? `SELECT * FROM read_parquet('${safePath}')`
             : `SELECT * FROM read_parquet('${safePath}')`;
 
         let reader;
@@ -339,13 +404,12 @@ class DataManager {
         this.manifests.set(name, manifest);
 
         for (const [tableName, records] of Object.entries(tables)) {
-            await this.writeTableData(tableName, records);
-            const parquetPath = this.getTablePath(tableName, 'parquet');
-            this.emitMapping(tableName, parquetPath);
+            const writtenPath = await this.writeTableData(tableName, records);
+            this.emitMapping(tableName, writtenPath);
             if (tableName.startsWith(`${name}_`)) {
                 const shortKey = tableName.substring(name.length + 1);
                 if (shortKey) {
-                    this.emitMapping(shortKey, parquetPath);
+                    this.emitMapping(shortKey, writtenPath);
                 }
             }
         }
@@ -353,6 +417,10 @@ class DataManager {
         const metaTableName = `__vura_meta_${name}`;
         const metaRecords = [{ manifest: JSON.stringify(manifest) }];
         await this.writeTableData(metaTableName, metaRecords);
+
+        const rootTableInfo = this.findExistingTablePath(name);
+        const rootPath = rootTableInfo ? rootTableInfo.filePath : this.getTablePath(name, 'parquet');
+        this.emitMapping(name, rootPath);
 
         return tableNames;
     }
@@ -378,6 +446,12 @@ class DataManager {
     }
 
     async put(name, obj) {
+        if (obj && typeof obj === 'object' && (obj.constructor?.name === 'Table' || typeof obj.toArray === 'function')) {
+            const writtenPath = await this.writeTableData(name, obj);
+            this.emitMapping(name, writtenPath);
+            return [name];
+        }
+
         const isNested = (val) => {
             if (!val || typeof val !== 'object') return false;
             const list = Array.isArray(val) ? val : [val];
@@ -392,9 +466,8 @@ class DataManager {
         }
 
         const records = Array.isArray(obj) ? obj : [obj];
-        await this.writeTableData(name, records);
-        const parquetPath = this.getTablePath(name, 'parquet');
-        this.emitMapping(name, parquetPath);
+        const writtenPath = await this.writeTableData(name, records);
+        this.emitMapping(name, writtenPath);
         return [name];
     }
 
@@ -405,6 +478,207 @@ class DataManager {
             return await this.unpack(name);
         }
         return await this.readTableData(name);
+    }
+
+    async count(name) {
+        const tableInfo = this.findExistingTablePath(name);
+        if (!tableInfo) return 0;
+        const conn = await this.getDuckDbConn();
+        const safePath = tableInfo.filePath.replace(/\\/g, '/');
+        const reader = await conn.runAndReadAll(`SELECT COUNT(*)::BIGINT as total FROM read_parquet('${safePath}')`);
+        const rows = reader.getRows();
+        if (rows.length > 0 && rows[0][0] !== null) {
+            return Number(rows[0][0]);
+        }
+        return 0;
+    }
+
+    async *stream(name, options) {
+        const tableInfo = this.findExistingTablePath(name);
+        if (!tableInfo) return;
+
+        const batchSize = options && options.batchSize && options.batchSize > 0 ? options.batchSize : 50000;
+        const total = await this.count(name);
+        if (total === 0) return;
+
+        const conn = await this.getDuckDbConn();
+        const safePath = tableInfo.filePath.replace(/\\/g, '/');
+
+        for (let offset = 0; offset < total; offset += batchSize) {
+            const query = `SELECT * FROM read_parquet('${safePath}') LIMIT ${batchSize} OFFSET ${offset}`;
+            const reader = await conn.runAndReadAll(query);
+
+            const colNames = reader.columnNames();
+            const rows = reader.getRows();
+            const numCols = colNames.length;
+            const chunk = new Array(rows.length);
+
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                const obj = {};
+                for (let j = 0; j < numCols; j++) {
+                    const val = row[j];
+                    if (val === null || val === undefined) {
+                        obj[colNames[j]] = null;
+                    } else if (typeof val === 'bigint') {
+                        const num = Number(val);
+                        obj[colNames[j]] = Number.isSafeInteger(num) ? num : val.toString();
+                    } else if (typeof val === 'object') {
+                        obj[colNames[j]] = normalizeValue(val);
+                    } else {
+                        obj[colNames[j]] = val;
+                    }
+                }
+                chunk[i] = obj;
+            }
+            yield chunk;
+        }
+    }
+
+    async append(name, obj) {
+        const tableInfo = this.findExistingTablePath(name);
+        if (!tableInfo) {
+            return await this.put(name, obj);
+        }
+
+        const rawRecords = Array.isArray(obj) ? obj : [obj];
+        if (rawRecords.length === 0) return [name];
+
+        const targetPath = tableInfo.filePath.replace(/\\/g, '/');
+        const conn = await this.getDuckDbConn();
+
+        const tempTableName = `_temp_append_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const writtenTempPath = await this.writeTableData(tempTableName, rawRecords);
+        const tempSafePath = writtenTempPath.replace(/\\/g, '/');
+
+        const combinedTempName = `_temp_combined_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await conn.runAndReadAll(`
+            CREATE TEMP TABLE "${combinedTempName}" AS 
+            SELECT * FROM read_parquet('${targetPath}') 
+            UNION ALL BY NAME 
+            SELECT * FROM read_parquet('${tempSafePath}')
+        `);
+
+        const parquetPath = this.getTablePath(name, 'parquet');
+        const safeTarget = parquetPath.replace(/\\/g, '/');
+        await conn.runAndReadAll(`COPY "${combinedTempName}" TO '${safeTarget}' (FORMAT PARQUET)`);
+        await conn.runAndReadAll(`DROP TABLE IF EXISTS "${combinedTempName}"`);
+
+        if (fs.existsSync(writtenTempPath)) {
+            await fs.promises.unlink(writtenTempPath).catch(() => {});
+        }
+
+        this.emitMapping(name, parquetPath);
+        return [name];
+    }
+
+    async update(name, records, options) {
+        const tableInfo = this.findExistingTablePath(name);
+        if (!tableInfo) {
+            throw new Error(`Table '${name}' does not exist to update.`);
+        }
+
+        const rawRecords = Array.isArray(records) ? records : [records];
+        if (rawRecords.length === 0) return [name];
+
+        const keys = Array.isArray(options.on) ? options.on : [options.on];
+        if (keys.length === 0) {
+            throw new Error("Update requires at least one key specified in 'on'.");
+        }
+
+        const targetPath = tableInfo.filePath.replace(/\\/g, '/');
+        const conn = await this.getDuckDbConn();
+
+        const stageName = `_temp_stage_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const writtenStagePath = await this.writeTableData(stageName, rawRecords);
+        const stageSafePath = writtenStagePath.replace(/\\/g, '/');
+
+        const targetTempName = `_temp_target_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await conn.runAndReadAll(`CREATE TEMP TABLE "${targetTempName}" AS SELECT * FROM read_parquet('${targetPath}')`);
+
+        const stageReader = await conn.runAndReadAll(`SELECT * FROM read_parquet('${stageSafePath}') LIMIT 1`);
+        const stageCols = stageReader.columnNames();
+        const nonKeyCols = stageCols.filter(c => !keys.includes(c));
+
+        if (nonKeyCols.length > 0) {
+            const setClause = nonKeyCols.map(c => `"${c}" = s."${c}"`).join(', ');
+            const joinCond = keys.map(k => `t."${k}" = s."${k}"`).join(' AND ');
+
+            await conn.runAndReadAll(`
+                UPDATE "${targetTempName}" AS t
+                SET ${setClause}
+                FROM read_parquet('${stageSafePath}') AS s
+                WHERE ${joinCond}
+            `);
+        }
+
+        const parquetPath = this.getTablePath(name, 'parquet');
+        const safeTarget = parquetPath.replace(/\\/g, '/');
+        await conn.runAndReadAll(`COPY "${targetTempName}" TO '${safeTarget}' (FORMAT PARQUET)`);
+        await conn.runAndReadAll(`DROP TABLE IF EXISTS "${targetTempName}"`);
+
+        if (fs.existsSync(writtenStagePath)) {
+            await fs.promises.unlink(writtenStagePath).catch(() => {});
+        }
+
+        this.emitMapping(name, parquetPath);
+        return [name];
+    }
+
+    async upsert(name, records, options) {
+        const tableInfo = this.findExistingTablePath(name);
+        if (!tableInfo) {
+            return await this.put(name, records);
+        }
+
+        const rawRecords = Array.isArray(records) ? records : [records];
+        if (rawRecords.length === 0) return [name];
+
+        const keys = Array.isArray(options.on) ? options.on : [options.on];
+        if (keys.length === 0) {
+            throw new Error("Upsert requires at least one key specified in 'on'.");
+        }
+
+        const targetPath = tableInfo.filePath.replace(/\\/g, '/');
+        const conn = await this.getDuckDbConn();
+
+        const stageName = `_temp_stage_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        const writtenStagePath = await this.writeTableData(stageName, rawRecords);
+        const stageSafePath = writtenStagePath.replace(/\\/g, '/');
+
+        const targetTempName = `_temp_target_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        await conn.runAndReadAll(`CREATE TEMP TABLE "${targetTempName}" AS SELECT * FROM read_parquet('${targetPath}')`);
+
+        const stageReader = await conn.runAndReadAll(`SELECT * FROM read_parquet('${stageSafePath}') LIMIT 1`);
+        const stageCols = stageReader.columnNames();
+        const nonKeyCols = stageCols.filter(c => !keys.includes(c));
+
+        const joinCond = keys.map(k => `t."${k}" = s."${k}"`).join(' AND ');
+        const updateSetClause = nonKeyCols.map(c => `"${c}" = s."${c}"`).join(', ');
+        const insertColsClause = stageCols.map(c => `"${c}"`).join(', ');
+        const insertValsClause = stageCols.map(c => `s."${c}"`).join(', ');
+
+        const updatePart = nonKeyCols.length > 0 ? `WHEN MATCHED THEN UPDATE SET ${updateSetClause}` : '';
+
+        await conn.runAndReadAll(`
+            MERGE INTO "${targetTempName}" AS t
+            USING read_parquet('${stageSafePath}') AS s
+            ON ${joinCond}
+            ${updatePart}
+            WHEN NOT MATCHED THEN INSERT (${insertColsClause}) VALUES (${insertValsClause})
+        `);
+
+        const parquetPath = this.getTablePath(name, 'parquet');
+        const safeTarget = parquetPath.replace(/\\/g, '/');
+        await conn.runAndReadAll(`COPY "${targetTempName}" TO '${safeTarget}' (FORMAT PARQUET)`);
+        await conn.runAndReadAll(`DROP TABLE IF EXISTS "${targetTempName}"`);
+
+        if (fs.existsSync(writtenStagePath)) {
+            await fs.promises.unlink(writtenStagePath).catch(() => {});
+        }
+
+        this.emitMapping(name, parquetPath);
+        return [name];
     }
 
     async tables(name) {
@@ -425,6 +699,7 @@ class DataManager {
             .filter(f => !f.startsWith('__vura_meta_'));
     }
 }
+
 
 class StateManager {
     constructor() {

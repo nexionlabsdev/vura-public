@@ -48,6 +48,8 @@ async function checkPackagesInstalled(pythonBin: string, packages: string[]): Pr
     }
 }
 
+const verifiedVenvs = new Set<string>();
+
 /**
  * Resolves the configured Python venv path (anchoring relative paths to
  * storagePath) and creates it if it doesn't exist yet. Ensures baseline
@@ -67,6 +69,10 @@ export async function ensurePythonVenv(env: IVuraEnvironment, logger: ICellLogge
     const pythonBin = isWin
         ? path.join(venvFolder, 'Scripts', 'python.exe')
         : path.join(venvFolder, 'bin', 'python');
+
+    if (verifiedVenvs.has(pythonBin)) {
+        return pythonBin;
+    }
 
     let isValid = false;
     try {
@@ -97,5 +103,6 @@ export async function ensurePythonVenv(env: IVuraEnvironment, logger: ICellLogge
         );
     }
 
+    verifiedVenvs.add(pythonBin);
     return pythonBin;
 }

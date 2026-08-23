@@ -221,15 +221,28 @@ class DataManager:
 
     def _write_table_data(self, table_name, records):
         curr_pd = self._get_pd()
-        if isinstance(records, curr_pd.DataFrame):
-            df = records
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        if isinstance(records, pa.Table):
+            table = records
+        elif isinstance(records, curr_pd.DataFrame):
+            table = pa.Table.from_pandas(records)
         elif not records:
             df = curr_pd.DataFrame(columns=["_vura_id", "_vura_parent_id", "_vura_index", "_vura_value"])
+            table = pa.Table.from_pandas(df)
+        elif isinstance(records, list):
+            try:
+                table = pa.Table.from_pylist(records)
+            except Exception:
+                df = curr_pd.DataFrame(records)
+                table = pa.Table.from_pandas(df)
         else:
-            df = curr_pd.DataFrame(records)
+            df = curr_pd.DataFrame([records])
+            table = pa.Table.from_pandas(df)
 
         parquet_path = self._get_table_path(table_name, 'parquet')
-        df.to_parquet(parquet_path, engine="pyarrow")
+        pq.write_table(table, parquet_path)
         return parquet_path
 
     def _read_table_data(self, table_name):
@@ -249,20 +262,21 @@ class DataManager:
         self._manifests[name] = manifest
 
         for table_name, records in tables.items():
-            self._write_table_data(table_name, records)
-            parquet_path = self._get_table_path(table_name, 'parquet')
-            self._emit_mapping(table_name, parquet_path)
+            file_path = self._write_table_data(table_name, records)
+            self._emit_mapping(table_name, file_path)
             if table_name.startswith(f"{name}_"):
                 short_key = table_name[len(name) + 1:]
                 if short_key:
-                    self._emit_mapping(short_key, parquet_path)
+                    self._emit_mapping(short_key, file_path)
 
         meta_table_name = f"__vura_meta_{name}"
         meta_records = [{"manifest": json.dumps(manifest)}]
         self._write_table_data(meta_table_name, meta_records)
 
-        root_parquet_path = self._get_table_path(name, 'parquet')
-        self._emit_mapping(name, root_parquet_path)
+        root_path, _ = self._find_existing_table_path(name)
+        if not root_path:
+            root_path = self._get_table_path(name, 'parquet')
+        self._emit_mapping(name, root_path)
         return table_names
 
     def unpack(self, name):
@@ -283,10 +297,11 @@ class DataManager:
 
     def put(self, name, obj):
         curr_pd = self._get_pd()
-        if isinstance(obj, curr_pd.DataFrame):
-            self._write_table_data(name, obj)
-            parquet_path = self._get_table_path(name, 'parquet')
-            self._emit_mapping(name, parquet_path)
+        import pyarrow as pa
+
+        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
+            file_path = self._write_table_data(name, obj)
+            self._emit_mapping(name, file_path)
             return [name]
 
         is_nested = False
@@ -302,9 +317,8 @@ class DataManager:
             return self.pack(name, obj)
 
         records = obj if isinstance(obj, list) else [obj]
-        self._write_table_data(name, records)
-        parquet_path = self._get_table_path(name, 'parquet')
-        self._emit_mapping(name, parquet_path)
+        file_path = self._write_table_data(name, records)
+        self._emit_mapping(name, file_path)
         return [name]
 
     def get(self, name):

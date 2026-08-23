@@ -146,11 +146,11 @@ export class DuckDbManager {
 
             const files = await fs.readdir(env.storagePath);
             for (const file of files) {
-                if (file.endsWith('.parquet') && !file.startsWith('__vura_meta_')) {
-                    const tableName = file.replace(/\.parquet$/, '');
+                if ((file.endsWith('.parquet') || file.endsWith('.arrow')) && !file.startsWith('__vura_meta_')) {
+                    const tableName = file.replace(/\.(parquet|arrow)$/, '');
                     if (!baseTables.has(tableName)) {
-                        const parquetPath = path.join(env.storagePath, file);
-                        await this.updateView(tableName, parquetPath);
+                        const filePath = path.join(env.storagePath, file);
+                        await this.updateView(tableName, filePath);
                     }
                 }
             }
@@ -190,20 +190,65 @@ export class DuckDbManager {
     }
 
     public async saveTableArrowIPC(tableName: string, ipcData: Buffer): Promise<void> {
+        if (!ipcData || ipcData.length === 0) return;
         const parsedTable = arrow.tableFromIPC([ipcData]);
-        const arr = parsedTable.toArray();
-        if (arr.length === 0) return;
+        const rawRecords = parsedTable.toArray();
+        if (rawRecords.length === 0) return;
 
-        const tempJson = this.dbPath + `_temp_arrow_${Date.now()}.json`;
-        await fs.writeFile(tempJson, JSON.stringify(arr, (k, v) => typeof v === 'bigint' ? Number(v) : v), 'utf8');
-
-        try {
-            try { await this.runQuery(`DROP VIEW IF EXISTS "${tableName}"`); } catch { }
-            try { await this.runQuery(`DROP TABLE IF EXISTS "${tableName}"`); } catch { }
-            await this.runQuery(`CREATE TABLE "${tableName}" AS SELECT * FROM read_json_auto('${tempJson}')`);
-        } finally {
-            await fs.unlink(tempJson).catch(() => {});
+        const schemaMap: Record<string, string> = {};
+        for (const r of rawRecords) {
+            if (r && typeof r === 'object') {
+                for (const [k, v] of Object.entries(r)) {
+                    if (!schemaMap[k] || schemaMap[k] === 'VARCHAR') {
+                        if (v === null || v === undefined) {
+                            if (!schemaMap[k]) schemaMap[k] = 'VARCHAR';
+                        } else if (typeof v === 'boolean') {
+                            schemaMap[k] = 'BOOLEAN';
+                        } else if (typeof v === 'number') {
+                            schemaMap[k] = Number.isInteger(v) ? 'BIGINT' : 'DOUBLE';
+                        } else if (typeof v === 'bigint') {
+                            schemaMap[k] = 'BIGINT';
+                        } else if (v instanceof Date) {
+                            schemaMap[k] = 'TIMESTAMP';
+                        } else {
+                            schemaMap[k] = 'VARCHAR';
+                        }
+                    }
+                }
+            }
         }
+
+        try { await this.runQuery(`DROP VIEW IF EXISTS "${tableName}"`); } catch { }
+        try { await this.runQuery(`DROP TABLE IF EXISTS "${tableName}"`); } catch { }
+
+        const colDefs = Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ');
+        await this.runQuery(`CREATE TABLE "${tableName}" (${colDefs})`);
+
+        const appender = await this.connection!.createAppender(tableName, 'main');
+        const keys = Object.keys(schemaMap);
+
+        for (const r of rawRecords) {
+            for (const k of keys) {
+                const val = r ? r[k] : null;
+                const type = schemaMap[k];
+                if (val === null || val === undefined) {
+                    appender.appendNull();
+                } else if (type === 'BIGINT') {
+                    appender.appendBigInt(BigInt(val));
+                } else if (type === 'DOUBLE') {
+                    appender.appendDouble(Number(val));
+                } else if (type === 'BOOLEAN') {
+                    appender.appendBoolean(Boolean(val));
+                } else if (type === 'TIMESTAMP' && val instanceof Date) {
+                    appender.appendVarchar(val.toISOString());
+                } else {
+                    appender.appendVarchar(typeof val === 'object' ? JSON.stringify(val) : String(val));
+                }
+            }
+            appender.endRow();
+        }
+        appender.flushSync();
+        appender.closeSync();
     }
 
     /** Export a DuckDB table to a parquet file so Python and Node.js sidecars can read it. */
@@ -228,8 +273,12 @@ export class DuckDbManager {
         } catch { }
     }
 
-    public async updateView(viewName: string, parquetFilePath: string): Promise<void> {
-        const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM read_parquet('${parquetFilePath.replace(/\\/g, '/')}');`;
+    public async updateView(viewName: string, filePath: string): Promise<void> {
+        const safePath = filePath.replace(/\\/g, '/');
+        const readQuery = filePath.endsWith('.arrow')
+            ? `read_ipc('${safePath}')`
+            : `read_parquet('${safePath}')`;
+        const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM ${readQuery};`;
         await this.runQuery(sql);
     }
 

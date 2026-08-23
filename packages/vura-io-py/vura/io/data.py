@@ -74,15 +74,28 @@ class DataManager:
 
     def _write_table_data(self, table_name, records):
         curr_pd = self._get_pd()
-        if isinstance(records, curr_pd.DataFrame):
-            df = records
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        if isinstance(records, pa.Table):
+            table = records
+        elif isinstance(records, curr_pd.DataFrame):
+            table = pa.Table.from_pandas(records)
         elif not records:
             df = curr_pd.DataFrame(columns=["_vura_id", "_vura_parent_id", "_vura_index", "_vura_value"])
+            table = pa.Table.from_pandas(df)
+        elif isinstance(records, list):
+            try:
+                table = pa.Table.from_pylist(records)
+            except Exception:
+                df = curr_pd.DataFrame(records)
+                table = pa.Table.from_pandas(df)
         else:
-            df = curr_pd.DataFrame(records)
+            df = curr_pd.DataFrame([records])
+            table = pa.Table.from_pandas(df)
 
         parquet_path = self._get_table_path(table_name, 'parquet')
-        df.to_parquet(parquet_path, engine="pyarrow")
+        pq.write_table(table, parquet_path)
         return parquet_path
 
     def _read_table_data(self, table_name):
@@ -102,20 +115,21 @@ class DataManager:
         self._manifests[name] = manifest
 
         for table_name, records in tables.items():
-            self._write_table_data(table_name, records)
-            parquet_path = self._get_table_path(table_name, 'parquet')
-            self._emit_mapping(table_name, parquet_path)
+            file_path = self._write_table_data(table_name, records)
+            self._emit_mapping(table_name, file_path)
             if table_name.startswith(f"{name}_"):
                 short_key = table_name[len(name) + 1:]
                 if short_key:
-                    self._emit_mapping(short_key, parquet_path)
+                    self._emit_mapping(short_key, file_path)
 
         meta_table_name = f"__vura_meta_{name}"
         meta_records = [{"manifest": json.dumps(manifest)}]
         self._write_table_data(meta_table_name, meta_records)
 
-        root_parquet_path = self._get_table_path(name, 'parquet')
-        self._emit_mapping(name, root_parquet_path)
+        root_path, _ = self._find_existing_table_path(name)
+        if not root_path:
+            root_path = self._get_table_path(name, 'parquet')
+        self._emit_mapping(name, root_path)
         return table_names
 
     def unpack(self, name):
@@ -136,10 +150,11 @@ class DataManager:
 
     def put(self, name, obj):
         curr_pd = self._get_pd()
-        if isinstance(obj, curr_pd.DataFrame):
-            self._write_table_data(name, obj)
-            parquet_path = self._get_table_path(name, 'parquet')
-            self._emit_mapping(name, parquet_path)
+        import pyarrow as pa
+
+        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
+            file_path = self._write_table_data(name, obj)
+            self._emit_mapping(name, file_path)
             return [name]
 
         is_nested = False
@@ -152,9 +167,8 @@ class DataManager:
             return self.pack(name, obj)
 
         records = obj if isinstance(obj, list) else [obj]
-        self._write_table_data(name, records)
-        parquet_path = self._get_table_path(name, 'parquet')
-        self._emit_mapping(name, parquet_path)
+        file_path = self._write_table_data(name, records)
+        self._emit_mapping(name, file_path)
         return [name]
 
     def get(self, name):
@@ -171,6 +185,149 @@ class DataManager:
             import pyarrow.feather as feather
             return feather.read_feather(file_path)
         return curr_pd.read_parquet(file_path, engine="pyarrow")
+
+    def count(self, name):
+        file_path, fmt = self._find_existing_table_path(name)
+        if not file_path:
+            return 0
+        import pyarrow.parquet as pq
+        return pq.ParquetFile(file_path).metadata.num_rows
+
+    def stream(self, name, batch_size=50000, format='dict'):
+        file_path, fmt = self._find_existing_table_path(name)
+        if not file_path:
+            return
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(file_path)
+        for batch in pf.iter_batches(batch_size=batch_size):
+            if format == 'arrow':
+                yield batch
+            elif format == 'dataframe':
+                curr_pd = self._get_pd()
+                yield curr_pd.DataFrame(batch.to_pydict())
+            else:
+                yield batch.to_pylist()
+
+    def append(self, name, obj):
+        file_path, _ = self._find_existing_table_path(name)
+        if not file_path:
+            return self.put(name, obj)
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        curr_pd = self._get_pd()
+
+        if isinstance(obj, pa.Table):
+            new_table = obj
+        elif isinstance(obj, curr_pd.DataFrame):
+            new_table = pa.Table.from_pandas(obj)
+        elif isinstance(obj, list):
+            new_table = pa.Table.from_pylist(obj)
+        else:
+            new_table = pa.Table.from_pandas(curr_pd.DataFrame([obj]))
+
+        existing_table = pq.read_table(file_path)
+        combined_table = pa.concat_tables([existing_table, new_table])
+        parquet_path = self._get_table_path(name, 'parquet')
+        pq.write_table(combined_table, parquet_path)
+        self._emit_mapping(name, parquet_path)
+        return [name]
+
+    def update(self, name, obj, on):
+        file_path, _ = self._find_existing_table_path(name)
+        if not file_path:
+            raise FileNotFoundError(f"Table '{name}' does not exist to update.")
+
+        keys = [on] if isinstance(on, str) else list(on)
+        if not keys:
+            raise ValueError("Update requires at least one key in 'on'.")
+
+        import duckdb
+        conn = duckdb.connect()
+        curr_pd = self._get_pd()
+        import pyarrow as pa
+
+        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
+            stage_df = obj.to_pandas() if isinstance(obj, pa.Table) else obj
+        elif isinstance(obj, list):
+            stage_df = curr_pd.DataFrame(obj)
+        else:
+            stage_df = curr_pd.DataFrame([obj])
+
+        safe_file_path = file_path.replace("\\", "/")
+        conn.register("stage_df", stage_df)
+        conn.execute(f"CREATE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+
+        stage_cols = list(stage_df.columns)
+        non_key_cols = [c for c in stage_cols if c not in keys]
+
+        if non_key_cols:
+            set_clause = ", ".join([f'"{c}" = s."{c}"' for c in non_key_cols])
+            join_cond = " AND ".join([f't."{k}" = s."{k}"' for k in keys])
+            conn.execute(f"""
+                UPDATE target_tbl AS t
+                SET {set_clause}
+                FROM stage_df AS s
+                WHERE {join_cond}
+            """)
+
+        parquet_path = self._get_table_path(name, 'parquet')
+        safe_target = parquet_path.replace("\\", "/")
+        conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
+        conn.close()
+
+        self._emit_mapping(name, parquet_path)
+        return [name]
+
+    def upsert(self, name, obj, on):
+        file_path, _ = self._find_existing_table_path(name)
+        if not file_path:
+            return self.put(name, obj)
+
+        keys = [on] if isinstance(on, str) else list(on)
+        if not keys:
+            raise ValueError("Upsert requires at least one key in 'on'.")
+
+        import duckdb
+        conn = duckdb.connect()
+        curr_pd = self._get_pd()
+        import pyarrow as pa
+
+        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
+            stage_df = obj.to_pandas() if isinstance(obj, pa.Table) else obj
+        elif isinstance(obj, list):
+            stage_df = curr_pd.DataFrame(obj)
+        else:
+            stage_df = curr_pd.DataFrame([obj])
+
+        safe_file_path = file_path.replace("\\", "/")
+        conn.register("stage_df", stage_df)
+        conn.execute(f"CREATE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+
+        stage_cols = list(stage_df.columns)
+        non_key_cols = [c for c in stage_cols if c not in keys]
+
+        join_cond = " AND ".join([f't."{k}" = s."{k}"' for k in keys])
+        update_set_clause = ", ".join([f'"{c}" = s."{c}"' for c in non_key_cols])
+        insert_cols_clause = ", ".join([f'"{c}"' for c in stage_cols])
+        insert_vals_clause = ", ".join([f's."{c}"' for c in stage_cols])
+
+        update_part = f"WHEN MATCHED THEN UPDATE SET {update_set_clause}" if non_key_cols else ""
+
+        conn.execute(f"""
+            MERGE INTO target_tbl AS t
+            USING stage_df AS s
+            ON {join_cond}
+            {update_part}
+            WHEN NOT MATCHED THEN INSERT ({insert_cols_clause}) VALUES ({insert_vals_clause})
+        """)
+
+        parquet_path = self._get_table_path(name, 'parquet')
+        safe_target = parquet_path.replace("\\", "/")
+        conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
+        conn.close()
+
+        self._emit_mapping(name, parquet_path)
+        return [name]
 
     def tables(self, name=None):
         if name:
@@ -190,3 +347,4 @@ class DataManager:
         ]
 
 data = DataManager()
+
