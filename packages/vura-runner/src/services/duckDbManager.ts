@@ -89,12 +89,15 @@ export class DuckDbManager {
         return mgr;
     }
 
-    public static async createIsolated(): Promise<DuckDbManager> {
+    public static async createIsolated(env?: IVuraEnvironment): Promise<DuckDbManager> {
         const mgr = new DuckDbManager();
         mgr.dbPath = ':memory:';
         mgr.db = await DuckDBInstance.create(':memory:');
         mgr.connection = await mgr.db.connect();
-        try { await mgr.runQuery("PRAGMA memory_limit='1GB'"); } catch {}
+        const maxMemory = env ? env.getConfig<string>('vura.duckdb.maxMemory', '1GB') : '1GB';
+        const maxTempDir = env ? env.getConfig<string>('vura.duckdb.maxTempDirectorySize', '2GB') : '2GB';
+        try { await mgr.runQuery(`PRAGMA memory_limit='${maxMemory}'`); } catch {}
+        try { await mgr.runQuery(`PRAGMA max_temp_directory_size='${maxTempDir}'`); } catch {}
         return mgr;
     }
 
@@ -128,8 +131,11 @@ export class DuckDbManager {
         this.db = await DuckDBInstance.create(this.dbPath);
         this.connection = await this.db.connect();
 
-        // Setup limit to 1GB
-        await this.runQuery("PRAGMA memory_limit='1GB'");
+        // Setup configurable limits (defaults: 1GB memory, 2GB temp disk)
+        const maxMemory = env.getConfig<string>('vura.duckdb.maxMemory', '1GB');
+        const maxTempDir = env.getConfig<string>('vura.duckdb.maxTempDirectorySize', '2GB');
+        try { await this.runQuery(`PRAGMA memory_limit='${maxMemory}'`); } catch {}
+        try { await this.runQuery(`PRAGMA max_temp_directory_size='${maxTempDir}'`); } catch {}
 
         await this.syncStorageViews(env);
     }

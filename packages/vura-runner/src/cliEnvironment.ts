@@ -14,12 +14,14 @@ export class CliEnvironment implements IVuraEnvironment {
     private configStorePath: string;
     private secretsStorePath: string;
 
-    constructor(notebookDir: string, envFilePath?: string) {
+    constructor(notebookDir: string, envFilePath?: string, sessionScope?: string) {
         this.notebookDir = path.resolve(notebookDir);
         this.extensionPath = path.resolve(__dirname, '..'); // package root
 
         const crypto = require('crypto');
-        this.notebookId = crypto.createHash('md5').update(this.notebookDir).digest('hex');
+        const scope = sessionScope || process.env.VURA_SESSION_ID || '';
+        const hashInput = scope ? `${this.notebookDir}:${scope}` : this.notebookDir;
+        this.notebookId = crypto.createHash('md5').update(hashInput).digest('hex');
         this.storagePath = path.join(process.cwd(), '.vura', 'storage', 'sessions', this.notebookId);
 
         // Load dotenv if specified
@@ -30,7 +32,7 @@ export class CliEnvironment implements IVuraEnvironment {
         }
 
         const homeDir = process.env.HOME || process.env.USERPROFILE || process.cwd();
-        const vuraDir = path.join(homeDir, '.vura');
+        const vuraDir = process.env.VURA_HOME || path.join(homeDir, '.vura');
         this.credentialsStorePath = path.join(vuraDir, 'credentials.json');
         this.configStorePath = path.join(vuraDir, 'config.json');
         this.secretsStorePath = path.join(vuraDir, 'secrets.json');
@@ -40,7 +42,13 @@ export class CliEnvironment implements IVuraEnvironment {
         try {
             this.configMap = JSON.parse(fsSync.readFileSync(this.configStorePath, 'utf8'));
         } catch {
-            this.configMap = {};
+            try {
+                // Fallback to local workspace .vura/config.json if available
+                const localConfig = path.join(process.cwd(), '.vura', 'config.json');
+                this.configMap = JSON.parse(fsSync.readFileSync(localConfig, 'utf8'));
+            } catch {
+                this.configMap = {};
+            }
         }
     }
 
@@ -79,6 +87,12 @@ export class CliEnvironment implements IVuraEnvironment {
     }
 
     public async getPythonVenvPath(): Promise<string | undefined> {
+        if (process.env.VURA_PYTHON_VENV_PATH) {
+            return process.env.VURA_PYTHON_VENV_PATH;
+        }
+        if (this.configMap['vura.python.venvPath']) {
+            return this.configMap['vura.python.venvPath'];
+        }
         const store = await this.loadConfigStore();
         if (store['vura.python.venvPath']) {
             return store['vura.python.venvPath'];

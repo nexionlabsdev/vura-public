@@ -22,12 +22,27 @@ function buildVegaLiteHtml(spec: any): string {
 }
 
 function transformImports(code: string): string {
-    try {
-        const result = esbuild.transformSync(code, { loader: 'ts', format: 'cjs' });
-        return result.code;
-    } catch {
-        return code;
-    }
+    if (typeof code !== 'string') return code;
+    return code
+        .replace(/^(\s*)import\s+(\*\s+as\s+\w+)\s+from\s+(['"][^'"]+['"])\s*;?/gm, '$1const $2 = require($3);')
+        .replace(/^(\s*)import\s+([\w$]+)\s*,\s*(\{[\s\S]*?\})\s+from\s+(['"][^'"]+['"])\s*;?/gm, (match, indent, defaultImport, namedImports, mod) => {
+            const destructured = namedImports.slice(1, -1).split(',').map((s: string) => {
+                const parts = s.trim().split(/\s+as\s+/);
+                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
+            }).filter(Boolean).join(', ');
+            return `${indent}const _default_${defaultImport} = require(${mod}); const ${defaultImport} = _default_${defaultImport}.default || _default_${defaultImport}; const { ${destructured} } = require(${mod});`;
+        })
+        .replace(/^(\s*)import\s+(\{[\s\S]*?\})\s+from\s+(['"][^'"]+['"])\s*;?/gm, (match, indent, clause, mod) => {
+            const destructured = clause.slice(1, -1).split(',').map((s: string) => {
+                const parts = s.trim().split(/\s+as\s+/);
+                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
+            }).filter(Boolean).join(', ');
+            return `${indent}const { ${destructured} } = require(${mod});`;
+        })
+        .replace(/^(\s*)import\s+([\w$]+)\s+from\s+(['"][^'"]+['"])\s*;?/gm, (match, indent, defaultImport, mod) => {
+            return `${indent}const _default_${defaultImport} = require(${mod}); const ${defaultImport} = _default_${defaultImport}.default || _default_${defaultImport};`;
+        })
+        .replace(/^(\s*)import\s+(['"][^'"]+['"])\s*;?/gm, '$1require($2);');
 }
 
 export async function handleNode(
@@ -51,10 +66,10 @@ export async function handleNode(
 
     let code = codeLines.join('\n');
     code = transformImports(code);
-    if (/:\s*[A-Z]|interface\s+|type\s+|as\s+[A-Z]/.test(code)) {
-        const transformResult = await esbuild.transform(code, { loader: 'ts', target: 'node18' });
+    try {
+        const transformResult = esbuild.transformSync(code, { loader: 'ts', target: 'node18' });
         code = transformResult.code;
-    }
+    } catch { }
 
     // Synthetic __filename/__dirname for the cell — no temp file is written to
     // disk anymore, the code goes straight to the warm worker over stdin.
@@ -82,7 +97,13 @@ export async function handleNode(
         process.env.NODE_PATH
     ].filter(Boolean).join(path.delimiter);
 
-    const worker = await sidecarPool.acquire(poolKey, () => spawn(nodeBin, [sidecarScript, '--serve'], {
+    const maxOldSpaceSizeMb = env.getConfig<number>('vura.node.maxOldSpaceSizeMb', 512);
+    const nodeArgs = [sidecarScript, '--serve'];
+    if (maxOldSpaceSizeMb && maxOldSpaceSizeMb > 0) {
+        nodeArgs.unshift(`--max-old-space-size=${maxOldSpaceSizeMb}`);
+    }
+
+    const worker = await sidecarPool.acquire(poolKey, () => spawn(nodeBin, nodeArgs, {
         cwd: env.notebookDir,
         env: { ...process.env, VURA_STORAGE_PATH: env.storagePath, NODE_PATH: extraNodePaths },
         windowsHide: true

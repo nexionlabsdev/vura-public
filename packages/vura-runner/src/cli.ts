@@ -111,9 +111,108 @@ program.command('serve [target]')
         await startServer(parseInt(options.port, 10), target, options.env, parseInt(options.maxLogSize, 10));
     });
 
+async function parseHttpRequestContext(options: any): Promise<any | null> {
+    const hasHttpInput = options.request || options.data || options.header || options.query || options.param || options.get;
+    if (!hasHttpInput) return null;
+
+    const method = (options.request || (options.data && !options.get ? 'POST' : 'GET')).toUpperCase();
+
+    // Headers parsing
+    const headers: Record<string, string> = {};
+    if (options.header) {
+        const rawHeaders = Array.isArray(options.header) ? options.header : [options.header];
+        for (const h of rawHeaders) {
+            const idx = h.indexOf(':');
+            if (idx > 0) {
+                const key = h.substring(0, idx).trim().toLowerCase();
+                const val = h.substring(idx + 1).trim();
+                headers[key] = val;
+            }
+        }
+    }
+
+    // Query parsing
+    const query: Record<string, any> = {};
+    const parseQueryStr = (qs: string) => {
+        const clean = qs.startsWith('?') ? qs.substring(1) : qs;
+        const parts = clean.split('&');
+        for (const part of parts) {
+            if (!part) continue;
+            const [k, v] = part.split('=');
+            if (k) {
+                query[decodeURIComponent(k)] = v !== undefined ? decodeURIComponent(v) : '';
+            }
+        }
+    };
+
+    if (options.query) {
+        if (typeof options.query === 'string' && options.query.trim().startsWith('{')) {
+            try {
+                Object.assign(query, JSON.parse(options.query));
+            } catch {
+                parseQueryStr(options.query);
+            }
+        } else {
+            parseQueryStr(String(options.query));
+        }
+    }
+
+    if (options.param) {
+        const params = Array.isArray(options.param) ? options.param : [options.param];
+        for (const p of params) {
+            const idx = p.indexOf('=');
+            if (idx > 0) {
+                const key = p.substring(0, idx).trim();
+                const val = p.substring(idx + 1).trim();
+                query[key] = val;
+            }
+        }
+    }
+
+    // Body parsing
+    let body: any = {};
+    if (options.data) {
+        let rawData = options.data;
+        if (typeof rawData === 'string' && rawData.startsWith('@')) {
+            const filePath = path.resolve(process.cwd(), rawData.substring(1));
+            rawData = await fs.readFile(filePath, 'utf8');
+        }
+
+        if (options.get) {
+            parseQueryStr(String(rawData));
+        } else {
+            try {
+                body = JSON.parse(rawData);
+            } catch {
+                if (headers['content-type']?.includes('application/x-www-form-urlencoded') || String(rawData).includes('=')) {
+                    const parsed: Record<string, any> = {};
+                    const clean = String(rawData).startsWith('?') ? String(rawData).substring(1) : String(rawData);
+                    for (const part of clean.split('&')) {
+                        if (!part) continue;
+                        const [k, v] = part.split('=');
+                        if (k) parsed[decodeURIComponent(k)] = v !== undefined ? decodeURIComponent(v) : '';
+                    }
+                    body = parsed;
+                } else {
+                    body = rawData;
+                }
+            }
+        }
+    }
+
+    return { query, body, headers, method };
+}
+
 program.command('execute')
     .description('Execute a .flownb file')
     .argument('<file>', 'path to .flownb file')
+    .option('-X, --request <method>', 'HTTP request method (GET, POST, PUT, DELETE, etc.)')
+    .option('-d, --data <data>', 'HTTP request body data (raw JSON string or @file)')
+    .option('-H, --header <header...>', 'HTTP request header (e.g. -H "Content-Type: application/json")')
+    .option('-q, --query <query>', 'HTTP query string or JSON (e.g. -q "page=2&page_size=10")')
+    .option('-p, --param <key=value...>', 'HTTP query parameter pair (e.g. -p page=2 -p page_size=10)')
+    .option('-G, --get', 'Send -d/--data as query parameters (curl compatible)')
+    .option('--session <id>', 'Session identifier for isolated execution storage')
     .option('--env <path>', 'Path to .env file')
     .option('--rows <number>', 'Number of rows to display for tabular output', '5')
     .option('--output <path>', 'File path to save JSON output')
@@ -150,9 +249,15 @@ program.command('execute')
                 process.exit(0);
             }
 
-            const env = new CliEnvironment(path.dirname(fullPath), options.env);
+            const sessionScope = options.session || path.basename(fullPath);
+            const env = new CliEnvironment(path.dirname(fullPath), options.env, sessionScope);
             const runner = new VuraRunner(env);
             const logger = new ConsoleLogger(parseInt(options.rows, 10), options.output);
+
+            const httpContext = await parseHttpRequestContext(options);
+            if (httpContext) {
+                await runner.injectHttpRequest(httpContext, logger);
+            }
 
             if (options.cell) {
                 const targetIndex = parseInt(options.cell, 10) - 1;

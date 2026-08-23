@@ -741,6 +741,30 @@ class MetricsManager {
     }
 }
 
+function transformImports(code) {
+    if (typeof code !== 'string') return code;
+    return code
+        .replace(/^(\s*)import\s+(\*\s+as\s+\w+)\s+from\s+(['"][^'"]+['"])\s*;?/gm, '$1const $2 = require($3);')
+        .replace(/^(\s*)import\s+([\w$]+)\s*,\s*(\{[\s\S]*?\})\s+from\s+(['"][^'"]+['"])\s*;?/gm, (match, indent, defaultImport, namedImports, mod) => {
+            const destructured = namedImports.slice(1, -1).split(',').map((s) => {
+                const parts = s.trim().split(/\s+as\s+/);
+                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
+            }).filter(Boolean).join(', ');
+            return `${indent}const _default_${defaultImport} = require(${mod}); const ${defaultImport} = _default_${defaultImport}.default || _default_${defaultImport}; const { ${destructured} } = require(${mod});`;
+        })
+        .replace(/^(\s*)import\s+(\{[\s\S]*?\})\s+from\s+(['"][^'"]+['"])\s*;?/gm, (match, indent, clause, mod) => {
+            const destructured = clause.slice(1, -1).split(',').map((s) => {
+                const parts = s.trim().split(/\s+as\s+/);
+                return parts.length === 2 ? `${parts[0]}: ${parts[1]}` : parts[0];
+            }).filter(Boolean).join(', ');
+            return `${indent}const { ${destructured} } = require(${mod});`;
+        })
+        .replace(/^(\s*)import\s+([\w$]+)\s+from\s+(['"][^'"]+['"])\s*;?/gm, (match, indent, defaultImport, mod) => {
+            return `${indent}const _default_${defaultImport} = require(${mod}); const ${defaultImport} = _default_${defaultImport}.default || _default_${defaultImport};`;
+        })
+        .replace(/^(\s*)import\s+(['"][^'"]+['"])\s*;?/gm, '$1require($2);');
+}
+
 async function serveForever(data, state, metrics) {
     const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
@@ -769,7 +793,8 @@ async function serveForever(data, state, metrics) {
         const cellFilename = filename || path.join(process.cwd(), 'cell.js');
 
         try {
-            const wrapped = `(async () => {\n${code}\n})()`;
+            let processedCode = transformImports(code);
+            const wrapped = `(async () => {\n${processedCode}\n})()`;
             const script = new vm.Script(wrapped, { filename: cellFilename });
             const vuraObj = { io: { data, state, metrics }, data, state, metrics };
             const sandbox = {

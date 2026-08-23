@@ -8,7 +8,7 @@ export async function handleHttpInput(
     duckDb: DuckDbManager
 ): Promise<void> {
     const Ajv = require('ajv');
-    const ajv = new Ajv();
+    const ajv = new Ajv({ strict: false });
 
     let schema;
     try {

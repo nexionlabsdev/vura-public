@@ -35,3 +35,11 @@ yarn-error.log*
 
 # Sample file exports
 samples/exported/
+
+# tests output
+tests/flows/
+tests/*.html
+
+# samples data
+samples/data/
+samples/requirements.txt

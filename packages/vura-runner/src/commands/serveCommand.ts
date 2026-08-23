@@ -187,8 +187,13 @@ async function warmSidecars(env: CliEnvironment, manifest: VuraManifest) {
         const sidecarScript = path.join(env.storagePath, 'sidecar.js');
         const poolKey = `${env.notebookId}:node`;
         const nodeBin = process.execPath || 'node';
+        const maxOldSpaceSizeMb = env.getConfig<number>('vura.node.maxOldSpaceSizeMb', 512);
+        const nodeArgs = [sidecarScript, '--serve'];
+        if (maxOldSpaceSizeMb && maxOldSpaceSizeMb > 0) {
+            nodeArgs.unshift(`--max-old-space-size=${maxOldSpaceSizeMb}`);
+        }
         try {
-            const worker = await sidecarPool.acquire(poolKey, () => spawn(nodeBin, [sidecarScript, '--serve'], {
+            const worker = await sidecarPool.acquire(poolKey, () => spawn(nodeBin, nodeArgs, {
                 cwd: env.notebookDir,
                 env: { ...process.env, VURA_STORAGE_PATH: env.storagePath },
                 windowsHide: true
@@ -441,8 +446,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
 
             try {
                 await fs.mkdir(runStoragePath, { recursive: true });
-                const mainDuckDb = await DuckDbManager.getInstance(env);
-                sessionDuckDb = await mainDuckDb.connectSession(schemaName);
+                sessionDuckDb = await DuckDbManager.createIsolated(env);
                 const mark2 = Date.now();
 
                 const requestEnv = Object.create(env);
