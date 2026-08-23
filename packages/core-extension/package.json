@@ -152,6 +152,11 @@
         "command": "vura-notebook.toggleHttpOutput",
         "title": "VURA Notebook: Toggle API Output",
         "icon": "$(globe)"
+      },
+      {
+        "command": "vura-notebook.cleanSession",
+        "title": "Clean Notebook Session",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -196,6 +201,11 @@
           "command": "vura-notebook.selectVenv",
           "when": "notebookType == 'vura-notebook'",
           "group": "navigation@1"
+        },
+        {
+          "command": "vura-notebook.cleanSession",
+          "when": "notebookType == 'vura-notebook'",
+          "group": "navigation@2"
         }
       ],
       "notebook/cell/title": [

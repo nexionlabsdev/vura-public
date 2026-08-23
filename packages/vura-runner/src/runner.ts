@@ -18,10 +18,74 @@ import { ParquetUtilities } from '@vura-data-os/core-sdk';
 import * as arrow from 'apache-arrow';
 import { IVuraEnvironment, ICellLogger, FlownbCell, NotebookExecutionResult, CellExecutionResult } from './interfaces';
 
+export async function prepareStorageWorkspace(env: IVuraEnvironment, logger?: ICellLogger): Promise<void> {
+    if (!env.storagePath) {
+        throw new Error("Storage path is required to run VURA.");
+    }
+    await fs.mkdir(env.storagePath, { recursive: true });
+
+    const assets = ['sidecar.py', 'sidecar.js'];
+    for (const asset of assets) {
+        const source = path.join(__dirname, 'assets', asset);
+        const target = path.join(env.storagePath, asset);
+        try {
+            await fs.copyFile(source, target);
+        } catch (e) { }
+    }
+
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const baseStorage = (env.notebookId && env.storagePath.includes(path.join('sessions', env.notebookId)))
+        ? path.dirname(path.dirname(env.storagePath))
+        : env.storagePath;
+
+    await fs.mkdir(baseStorage, { recursive: true });
+    const packageJsonPath = path.join(baseStorage, 'package.json');
+    try {
+        await fs.access(packageJsonPath);
+    } catch {
+        const dummyJson = JSON.stringify({ name: "vura-storage", private: true, dependencies: { "@duckdb/node-api": "*", "apache-arrow": "*" } });
+        await fs.writeFile(packageJsonPath, dummyJson, 'utf8');
+    }
+}
+
+export async function cleanNotebookSession(env: IVuraEnvironment): Promise<void> {
+    const notebookId = env.notebookId || 'default';
+
+    // 1. Dispose DuckDB instance
+    DuckDbManager.disposeNotebook(notebookId);
+
+    // 2. Dispose warm sidecar processes
+    const { sidecarPool } = require('./services/sidecarPool');
+    sidecarPool.disposeNotebook(notebookId);
+
+    // 3. Clear ContextManager mappings
+    const { ContextManager } = require('./services/contextManager');
+    ContextManager.getInstance().clearMappings(notebookId);
+
+    // 4. Delete session files and directories
+    if (env.storagePath) {
+        try {
+            const files = await fs.readdir(env.storagePath);
+            for (const file of files) {
+                const fullPath = path.join(env.storagePath, file);
+                await fs.rm(fullPath, { recursive: true, force: true }).catch(() => {});
+            }
+        } catch { }
+    }
+}
+
+export interface VuraRunnerOptions {
+    enableVisualOutputs?: boolean;
+    schemaName?: string;
+}
+
 export class VuraRunner {
     private isStoragePrepared = false;
+    private options: VuraRunnerOptions;
 
-    constructor(private env: IVuraEnvironment, private _duckDbInstance?: DuckDbManager) {}
+    constructor(private env: IVuraEnvironment, private _duckDbInstance?: DuckDbManager, options?: VuraRunnerOptions) {
+        this.options = { enableVisualOutputs: true, ...options };
+    }
 
     private async _getDuckDb(): Promise<DuckDbManager> {
         return this._duckDbInstance ?? DuckDbManager.getInstance(this.env);
@@ -94,41 +158,21 @@ export class VuraRunner {
         };
         await fs.writeFile(reqJsonPath, JSON.stringify([reqObj]), 'utf8');
 
+        const duckDb = await this._getDuckDb();
+        try { await duckDb.runQuery(`DROP VIEW IF EXISTS http_request`); } catch { }
+        try { await duckDb.runQuery(`DROP TABLE IF EXISTS http_request`); } catch { }
+
         // Create or replace DuckDB table using read_json_auto so query, body, headers are STRUCTs
         await this.executeSql({
             language: 'sql',
-            value: `CREATE OR REPLACE TABLE http_request AS SELECT * FROM read_json_auto('${reqJsonPath.replace(/\\/g, '/')}');`,
+            value: `CREATE TABLE http_request AS SELECT * FROM read_json_auto('${reqJsonPath.replace(/\\/g, '/')}');`,
             kind: 2
         }, -1, logger);
     }
 
     private async prepareStorage(logger: ICellLogger) {
         if (this.isStoragePrepared) return;
-        if (!this.env.storagePath) {
-            throw new Error("Storage path is required to run VURA.");
-        }
-        await fs.mkdir(this.env.storagePath, { recursive: true });
-
-        const assets = ['sidecar.py', 'sidecar.js'];
-        for (const asset of assets) {
-            // runner.js is in out/ so assets are in out/assets/
-            const source = path.join(__dirname, 'assets', asset);
-            const target = path.join(this.env.storagePath, asset);
-            try {
-                // Read source to force copy if missing or update if modified
-                await fs.copyFile(source, target);
-            } catch(e) { }
-        }
-
-        const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-        const packageJsonPath = path.join(this.env.storagePath, 'package.json');
-        try {
-            await fs.access(packageJsonPath);
-        } catch {
-            await VuraRunner.runProcess(npmCmd, ['init', '-y'], this.env.storagePath, logger, process.env, true);
-            await VuraRunner.runProcess(npmCmd, ['install', 'apache-arrow', 'parquetjs-lite'], this.env.storagePath, logger, process.env, true);
-        }
-
+        await prepareStorageWorkspace(this.env, logger);
         this.isStoragePrepared = true;
     }
 
@@ -210,6 +254,7 @@ export class VuraRunner {
 
         const statements = splitSqlStatements(query);
         const duckDb = await this._getDuckDb();
+        await duckDb.syncStorageViews(this.env);
         let statementIndex = 1;
 
         for (const statement of statements) {
@@ -241,6 +286,15 @@ export class VuraRunner {
                     } catch { }
                 }
             } else {
+                const createMatch = statement.match(/CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW)\s+(?:"([^"]+)"|([a-zA-Z0-9_]+))/i);
+                let targetName: string | null = null;
+                if (createMatch) {
+                    targetName = createMatch[1] || createMatch[2];
+                    if (targetName) {
+                        try { await duckDb.runQuery(`DROP VIEW IF EXISTS "${targetName}"`); } catch { }
+                        try { await duckDb.runQuery(`DROP TABLE IF EXISTS "${targetName}"`); } catch { }
+                    }
+                }
                 records = await duckDb.runQuery(statement);
                 if (statement.trim().toUpperCase().startsWith("SELECT")) {
                     // Guard each drop independently: DuckDB's IF EXISTS doesn't suppress
@@ -250,8 +304,13 @@ export class VuraRunner {
                     try { await duckDb.runQuery(`DROP TABLE IF EXISTS "${currentTableName}"`); } catch { }
                     try {
                         await duckDb.runQuery(`CREATE TABLE "${currentTableName}" AS ${statement}`);
-                        await duckDb.exportTableToParquet(currentTableName, this.env.storagePath);
                     } catch(e) { }
+                    targetName = currentTableName;
+                }
+                if (targetName) {
+                    try {
+                        await duckDb.exportTableToParquet(targetName, this.env.storagePath);
+                    } catch { }
                 }
             }
 
@@ -268,10 +327,13 @@ export class VuraRunner {
                     }
                     return out;
                 });
-                await logger.logMultiple([
-                    { mime: 'application/vnd.vura.visual', data: this._getGridHtml(safeRecords) },
+                const outputs: { mime: string; data: any }[] = [
                     { mime: 'application/json', data: safeRecords }
-                ]);
+                ];
+                if (this.options.enableVisualOutputs !== false) {
+                    outputs.unshift({ mime: 'application/vnd.vura.visual', data: this._getGridHtml(safeRecords) });
+                }
+                await logger.logMultiple(outputs);
                 statementIndex++;
             } else if (statements.length === 1) {
                 await logger.logText('Query executed successfully. No records returned.');
@@ -308,7 +370,8 @@ export class VuraRunner {
             ? `Showing rows 1-${firstPage.length} of ${totalRows}`
             : `${totalRows} row${totalRows !== 1 ? 's' : ''}`;
 
-        const jsonData = JSON.stringify(data, (k, v) => (typeof v === 'bigint' ? Number(v) : v))
+        const embedData = data.length > 500 ? data.slice(0, 500) : data;
+        const jsonData = JSON.stringify(embedData, (k, v) => (typeof v === 'bigint' ? Number(v) : v))
             .replace(/&/g, '\\u0026')
             .replace(/</g, '\\u003c')
             .replace(/>/g, '\\u003e')

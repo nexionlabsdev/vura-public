@@ -85,6 +85,21 @@ program
     .description('CLI to execute VURA .flownb notebooks')
     .version('1.0.0');
 
+import { compileTarget } from './commands/compileCommand';
+
+program.command('compile [target]')
+    .description('Compile .flownb notebook(s), check diagnostics, provision dependencies, and generate .vura/manifest.json')
+    .option('--env <path>', 'Path to .env file')
+    .action(async (targetArg, options) => {
+        try {
+            const target = targetArg || '.';
+            await compileTarget(target, options.env);
+        } catch (e: any) {
+            console.error('Compilation failed:', e.message || e);
+            process.exit(1);
+        }
+    });
+
 program.command('serve [target]')
     .description('Start an HTTP server to trigger .flownb files via API')
     .option('--port <number>', 'Port to run the server on', '3000')
@@ -93,7 +108,7 @@ program.command('serve [target]')
     .option('--max-log-size <number>', 'Max log/output size in MB per cell before truncation', '5')
     .action(async (targetArg, options) => {
         const target = options.notebooksDir || targetArg || '.';
-        startServer(parseInt(options.port, 10), target, options.env, parseInt(options.maxLogSize, 10));
+        await startServer(parseInt(options.port, 10), target, options.env, parseInt(options.maxLogSize, 10));
     });
 
 program.command('execute')

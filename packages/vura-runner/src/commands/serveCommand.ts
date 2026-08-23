@@ -1,8 +1,9 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as yaml from 'yaml';
+import { spawn } from 'child_process';
 import { CliEnvironment } from '../cliEnvironment';
-import { VuraRunner } from '../runner';
+import { VuraRunner, prepareStorageWorkspace } from '../runner';
 import { FlownbCell, ICellLogger } from '../interfaces';
 import { DuckDbManager } from '../services/duckDbManager';
 import { sidecarPool } from '../services/sidecarPool';
@@ -11,9 +12,13 @@ import { EventEmitter } from 'events';
 import swaggerUi from 'swagger-ui-express';
 import { generateSwaggerDoc } from './swaggerGenerator';
 import { parseFlownbContent } from '../utils/flownbLoader';
+import { compileTarget, findFlownbFiles, readSnapshot, computeChecksum, VuraManifest } from './compileCommand';
+import { ensurePythonVenv } from '../utils/pythonVenv';
+import { colors, logSuccess, logWarning, logError, logInfo } from '../utils/colors';
 
 const eventBus = new EventEmitter();
 const runQueue = new Map<string, Promise<any>>();
+let activeManifest: VuraManifest | null = null;
 
 // Helper to send SSE events
 function broadcastEvent(type: string, data: any) {
@@ -149,7 +154,73 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     });
 }
 
-export function startServer(port: number, dir: string, envPath?: string, maxLogSizeMb: number = 5) {
+async function checkNeedsCompile(targetPath: string, baseDir: string): Promise<boolean> {
+    const manifestPath = path.join(baseDir, '.vura', 'manifest.json');
+    try {
+        const raw = await fs.readFile(manifestPath, 'utf8');
+        const manifest: VuraManifest = JSON.parse(raw);
+        const files = await findFlownbFiles(targetPath);
+        if (files.length === 0) return true;
+        for (const file of files) {
+            const relPath = path.relative(baseDir, file).replace(/\\/g, '/');
+            const entry = manifest.notebooks[relPath];
+            if (!entry) return true;
+            const content = await readSnapshot(file);
+            const checksum = computeChecksum(content);
+            if (checksum !== entry.checksum) return true;
+        }
+        return false;
+    } catch {
+        return true;
+    }
+}
+
+async function warmSidecars(env: CliEnvironment, manifest: VuraManifest) {
+    let hasPython = false;
+    let hasNode = false;
+    for (const entry of Object.values(manifest.notebooks)) {
+        if (entry.hasPython) hasPython = true;
+        if (entry.hasNode) hasNode = true;
+    }
+
+    if (hasNode) {
+        const sidecarScript = path.join(env.storagePath, 'sidecar.js');
+        const poolKey = `${env.notebookId}:node`;
+        const nodeBin = process.execPath || 'node';
+        try {
+            const worker = await sidecarPool.acquire(poolKey, () => spawn(nodeBin, [sidecarScript, '--serve'], {
+                cwd: env.notebookDir,
+                env: { ...process.env, VURA_STORAGE_PATH: env.storagePath },
+                windowsHide: true
+            }));
+            sidecarPool.release(poolKey, worker);
+        } catch (err: any) {
+            console.warn(`[WARMUP WARNING] Failed to pre-warm Node.js sidecar: ${err.message}`);
+        }
+    }
+
+    if (hasPython) {
+        const dummyLogger = {
+            logText: async () => {}, logError: async () => {}, logHtml: async () => {},
+            logJson: async () => {}, logMultiple: async () => {}, clearOutput: async () => {}, replaceOutput: async () => {}
+        };
+        try {
+            const pythonBin = await ensurePythonVenv(env, dummyLogger);
+            const sidecarScript = path.join(env.storagePath, 'sidecar.py');
+            const poolKey = `${env.notebookId}:python:${pythonBin}`;
+            const worker = await sidecarPool.acquire(poolKey, () => spawn(pythonBin, ['-u', sidecarScript, '--serve'], {
+                cwd: env.notebookDir,
+                env: { ...process.env, VURA_STORAGE_PATH: env.storagePath, PYTHONUNBUFFERED: '1' },
+                windowsHide: true
+            }));
+            sidecarPool.release(poolKey, worker);
+        } catch (err: any) {
+            console.warn(`[WARMUP WARNING] Failed to pre-warm Python sidecar: ${err.message}`);
+        }
+    }
+}
+
+export async function startServer(port: number, dir: string, envPath?: string, maxLogSizeMb: number = 5): Promise<import('http').Server> {
     const app = express();
     const targetPath = path.resolve(process.cwd(), dir);
 
@@ -165,6 +236,27 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
     } catch {}
 
     const env = new CliEnvironment(notebooksDir, envPath);
+
+    // Eager worker pre-warming, storage prep, DuckDB init, and manifest pre-compilation during boot
+    try {
+        await prepareStorageWorkspace(env);
+        const duckDb = await DuckDbManager.getInstance(env);
+        await duckDb.syncStorageViews(env);
+
+        const needsCompile = await checkNeedsCompile(targetPath, notebooksDir);
+        if (needsCompile) {
+            console.log('🔄 Manifest missing or source modified. Running auto-compile...');
+            activeManifest = await compileTarget(targetPath, envPath, { quiet: false });
+        } else {
+            const manifestPath = path.join(notebooksDir, '.vura', 'manifest.json');
+            activeManifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+        }
+        if (activeManifest) {
+            await warmSidecars(env, activeManifest);
+        }
+    } catch (err: any) {
+        console.warn(`[SERVE INIT WARNING] Auto-compile / warming failed: ${err.message}`);
+    }
 
     app.use(express.json());
     
@@ -341,16 +433,29 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
             await logHistoryToDuckDb(env, runId, notebookFile, 'running', null);
 
             const httpRequestContext = { query: req.query, body: req.body || {}, headers: req.headers, method: req.method };
-            let isolatedDuckDb: DuckDbManager | null = null;
+            let sessionDuckDb: DuckDbManager | null = null;
+            const schemaName = `session_${runId}`;
+            const runStoragePath = path.join(env.storagePath, 'runs', runId);
 
             try {
-                isolatedDuckDb = await DuckDbManager.createIsolated();
+                await fs.mkdir(runStoragePath, { recursive: true });
+                const mainDuckDb = await DuckDbManager.getInstance(env);
+                sessionDuckDb = await mainDuckDb.connectSession(schemaName);
+
                 const requestEnv = Object.create(env);
+                requestEnv.storagePath = runStoragePath;
+                await prepareStorageWorkspace(requestEnv);
 
-                const content = await fs.readFile(fullPath, 'utf8');
-                const cells = parseFlownbContent(content);
+                let cells: FlownbCell[];
+                const manifestEntry = activeManifest?.notebooks[relPath];
+                if (manifestEntry?.ast?.cells) {
+                    cells = manifestEntry.ast.cells;
+                } else {
+                    const content = await fs.readFile(fullPath, 'utf8');
+                    cells = parseFlownbContent(content);
+                }
 
-                const runner = new VuraRunner(requestEnv, isolatedDuckDb);
+                const runner = new VuraRunner(requestEnv, sessionDuckDb, { enableVisualOutputs: false, schemaName });
                 const logger = new HttpLogger(runId, notebookFile, maxLogSizeMb);
 
                 await runner.injectHttpRequest(httpRequestContext, logger);
@@ -363,14 +468,9 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
                     logger.setCellIndex(i);
                 },
                 onCellEnd: (i, result) => {
-                    // Log to DuckDB asynchronously is fine, but we'll await it to ensure order
-                    // Since the callback is sync in interface, we do a fire-and-forget promise for logging
-                    // Wait, the interface is sync, so we just call it and it returns void.
-                    // Actually, let's make the hooks async or just fire-and-forget here
                     const cellError = result.error;
                     const cellStatus = result.status;
                     const cellDuration = result.durationMs;
-                    // Fire and forget DuckDB logging
                     logCellToDuckDb(env, runId, notebookFile, i, cellStatus, cellDuration, JSON.stringify(logger.currentCellLogs), JSON.stringify(logger.currentCellOutputs), cellError).catch(() => {});
                 }
             }), EXECUTION_TIMEOUT_MS);
@@ -398,7 +498,6 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
                 } else {
                     const boundary = 'vura_boundary_' + Date.now();
                     const parts: string[] = [];
-                    // Using the logger outputs for the http output cell's index
                     const outputs = execResult.httpOutputCellIndex !== null ? (logger.allCellOutputs[execResult.httpOutputCellIndex] || []) : [];
                     
                     for (let idx = 0; idx < outputs.length; idx++) {
@@ -420,6 +519,7 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
 
             const duration = Date.now() - startTime;
             if (execResult.status === 'error') {
+                console.error('Notebook Run Status:', execResult.status, 'Error:', execResult.error);
                 broadcastEvent('run_failed', { runId, flow: notebookFile, error: execResult.error });
                 await logHistoryToDuckDb(env, runId, notebookFile, 'error', duration);
             } else {
@@ -454,39 +554,100 @@ export function startServer(port: number, dir: string, envPath?: string, maxLogS
             
             return res.status(500).json({ error: errMsg });
         } finally {
-            if (isolatedDuckDb) {
-                isolatedDuckDb.dispose();
+            if (sessionDuckDb) {
+                await sessionDuckDb.dropSchema(schemaName).catch(() => {});
+                sessionDuckDb.dispose();
             }
+            try {
+                await fs.rm(runStoragePath, { recursive: true, force: true });
+            } catch {}
         }
         };
 
-        // Chain onto the existing run for this notebook, then reset to a flat resolved promise
-        // so the chain never grows longer than one pending run.
-        const prev = runQueue.get(notebookFile) ?? Promise.resolve();
-        const next = prev.then(() => executeRun()).finally(() => {
-            if (runQueue.get(notebookFile) === next) runQueue.set(notebookFile, Promise.resolve());
+        // Execute run concurrently with isolated schema session
+        executeRun();
+    });
+
+    return new Promise((resolve) => {
+        const server = app.listen(port, () => {
+            console.log(`${colors.bold}${colors.brightGreen}🚀 VURA API Server listening on port ${port}${colors.reset}`);
+            console.log(`${colors.cyan}📁 Serving notebooks from ${notebooksDir}${colors.reset}`);
+            console.log(`${colors.brightCyan}🌐 Dashboard available at http://localhost:${port}/${colors.reset}`);
+            if (process.stdin.isTTY) {
+                console.log(`\n${colors.bold}${colors.brightCyan}⌨️  Interactive Terminal Controls:${colors.reset}`);
+                console.log(`  ${colors.brightGreen}Ctrl + R (\\x12)${colors.reset}       : Hot reload .flownb definition (keeps warm gRPC sidecars)`);
+                console.log(`  ${colors.brightYellow}Shift + R${colors.reset}             : Full recompilation and sidecar restart`);
+                console.log(`  ${colors.brightRed}Ctrl + C (\\x03)${colors.reset}       : Graceful shutdown\n`);
+            }
+            resolve(server);
         });
-        runQueue.set(notebookFile, next);
-    });
 
-    const server = app.listen(port, () => {
-        console.log("VURA API Server listening on port " + port);
-        console.log("Serving notebooks from " + notebooksDir);
-        console.log("Dashboard available at http://localhost:" + port + "/");
-    });
+        if (process.stdin.isTTY) {
+            try {
+                process.stdin.setRawMode(true);
+                process.stdin.resume();
+                process.stdin.setEncoding('utf8');
 
-    // Warm sidecar workers persist across requests (that's the point of the pool) —
-    // only reap them on an actual shutdown, not per-request.
-    const shutdown = () => {
-        console.log("\nShutting down VURA API Server...");
-        try { sidecarPool.disposeAll(); } catch {}
-        if (typeof (server as any).closeAllConnections === 'function') {
-            (server as any).closeAllConnections();
+                process.stdin.on('data', async (key: Buffer | string) => {
+                    const str = key.toString();
+
+                    // Ctrl + C (ASCII \x03)
+                    if (str === '\x03') {
+                        shutdown();
+                        return;
+                    }
+
+                    // Ctrl + R (ASCII \x12) -> Hot reload definitions without terminating sidecars
+                    if (str === '\x12') {
+                        console.log(`\n${colors.bold}${colors.brightCyan}🔄 [HOT RELOAD] Reloading .flownb definitions (sidecars kept warm)...${colors.reset}`);
+                        try {
+                            activeManifest = await compileTarget(targetPath, envPath, { quiet: true });
+                            const flows = await scanFlows(targetPath, isSingleFile ? path.dirname(targetPath) : targetPath);
+                            logSuccess(`[HOT RELOAD] Successfully reloaded ${flows.length} flow definition(s).`);
+                        } catch (err: any) {
+                            logError(`[HOT RELOAD ERROR] ${err.message}`);
+                        }
+                        return;
+                    }
+
+                    // Shift + R ('R') or 'r' -> Full recompilation & sidecar restart
+                    if (str === 'R' || str === 'r') {
+                        console.log(`\n${colors.bold}${colors.brightYellow}⚡ [FULL RELOAD] Recompiling notebooks and restarting warm sidecar processes...${colors.reset}`);
+                        try {
+                            sidecarPool.disposeAll();
+                            activeManifest = await compileTarget(targetPath, envPath, { quiet: true });
+                            if (activeManifest) {
+                                await warmSidecars(env, activeManifest);
+                            }
+                            logSuccess(`[FULL RELOAD] Recompilation complete and sidecars re-warmed.`);
+                        } catch (err: any) {
+                            logError(`[FULL RELOAD ERROR] ${err.message}`);
+                        }
+                        return;
+                    }
+                });
+            } catch {}
         }
-        server.close();
-        process.exit(0);
-    };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
-    return server;
+
+        // Warm sidecar workers persist across requests (that's the point of the pool) —
+        // only reap them on an actual shutdown, not per-request.
+        const shutdown = () => {
+            console.log(`\n${colors.bold}${colors.brightRed}Shutting down VURA API Server...${colors.reset}`);
+            try {
+                if (process.stdin.isTTY) {
+                    process.stdin.setRawMode(false);
+                    process.stdin.pause();
+                }
+            } catch {}
+            try { sidecarPool.disposeAll(); } catch {}
+            try { DuckDbManager.disposeAll(); } catch {}
+            if (typeof (server as any).closeAllConnections === 'function') {
+                (server as any).closeAllConnections();
+            }
+            server.close();
+            process.exit(0);
+        };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+    });
 }

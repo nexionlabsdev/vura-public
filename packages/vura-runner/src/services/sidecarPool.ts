@@ -179,6 +179,15 @@ class SidecarPool {
         this.pools.delete(key);
     }
 
+    /** Kill every worker for a given notebookId across all runtime kinds. */
+    disposeNotebook(notebookId: string) {
+        for (const key of Array.from(this.pools.keys())) {
+            if (key.startsWith(`${notebookId}:`)) {
+                this.disposeKey(key);
+            }
+        }
+    }
+
     /** Kill every worker across every key (e.g. on CLI process exit). */
     disposeAll() {
         for (const workers of this.pools.values()) {

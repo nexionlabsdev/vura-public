@@ -10,7 +10,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "parquetjs-lite": "^0.8.7"
+    "@duckdb/node-api": "^1.5.5-r.4",
+    "apache-arrow": "^21.2.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

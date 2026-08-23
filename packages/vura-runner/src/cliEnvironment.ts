@@ -16,11 +16,11 @@ export class CliEnvironment implements IVuraEnvironment {
 
     constructor(notebookDir: string, envFilePath?: string) {
         this.notebookDir = path.resolve(notebookDir);
-        this.storagePath = path.join(process.cwd(), '.vura', 'storage');
         this.extensionPath = path.resolve(__dirname, '..'); // package root
 
         const crypto = require('crypto');
         this.notebookId = crypto.createHash('md5').update(this.notebookDir).digest('hex');
+        this.storagePath = path.join(process.cwd(), '.vura', 'storage', 'sessions', this.notebookId);
 
         // Load dotenv if specified
         if (envFilePath) {

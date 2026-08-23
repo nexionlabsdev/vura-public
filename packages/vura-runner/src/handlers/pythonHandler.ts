@@ -69,7 +69,7 @@ export async function handlePython(
     try {
         const response = await sidecarPool.send(worker, {
             code,
-            env: { VURA_DATAVERSE_TOKEN: activeToken, VURA_DEPTH_LIMIT: depthLimit.toString() }
+            env: { VURA_STORAGE_PATH: env.storagePath, VURA_DATAVERSE_TOKEN: activeToken, VURA_DEPTH_LIMIT: depthLimit.toString() }
         });
 
         // Pull the vura_bridge_mapping bookkeeping lines out of stderr before

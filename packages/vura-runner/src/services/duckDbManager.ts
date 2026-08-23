@@ -13,9 +13,35 @@ if (!(BigInt.prototype as any).toJSON) {
 
 function normalizeValue(val: any): any {
     if (val === null || val === undefined) return null;
+    if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'string') {
+        return val;
+    }
     if (typeof val === 'bigint') {
         const num = Number(val);
         return Number.isSafeInteger(num) ? num : val.toString();
+    }
+    if (typeof val.toUUID === 'function') {
+        return val.toUUID();
+    }
+    if (val.constructor && val.constructor.name === 'DuckDBUUIDValue') {
+        return val.toString();
+    }
+    if (typeof val.scale === 'number' && (typeof val.value === 'bigint' || typeof val.value === 'number')) {
+        return Number(val.value) / Math.pow(10, val.scale);
+    }
+    if (val instanceof Date) return val.toISOString();
+    if (typeof val.micros === 'bigint') {
+        return new Date(Number(val.micros / 1000n)).toISOString();
+    }
+    if (typeof val.days === 'number' || typeof val.months === 'number') {
+        return val.toString();
+    }
+    if (val instanceof Uint8Array || Buffer.isBuffer(val)) {
+        if (val.length === 16) {
+            const hex = Array.from(val, b => b.toString(16).padStart(2, '0')).join('');
+            return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        }
+        return Array.from(val);
     }
     if (typeof val === 'object') {
         if (val.entries && typeof val.entries === 'object') {
@@ -27,16 +53,6 @@ function normalizeValue(val: any): any {
         }
         if (Array.isArray(val)) {
             return val.map(normalizeValue);
-        }
-        if (typeof val.scale === 'number' && typeof val.value === 'bigint') {
-            return Number(val.value) / Math.pow(10, val.scale);
-        }
-        if (val instanceof Date) return val.toISOString();
-        if (typeof val.micros === 'bigint') {
-            return new Date(Number(val.micros / 1000n)).toISOString();
-        }
-        if (typeof val.days === 'number' || typeof val.months === 'number') {
-            return val.toString();
         }
         if (typeof val.toJSON === 'function') {
             return val.toJSON();
@@ -60,12 +76,17 @@ export class DuckDbManager {
 
     public static async getInstance(env: IVuraEnvironment): Promise<DuckDbManager> {
         const id = env.notebookId || 'default';
-        if (!DuckDbManager.instances.has(id)) {
-            const mgr = new DuckDbManager();
-            await mgr.initialize(env, id);
-            DuckDbManager.instances.set(id, mgr);
+        const existing = DuckDbManager.instances.get(id);
+        if (existing && existing.connection) {
+            return existing;
         }
-        return DuckDbManager.instances.get(id)!;
+        if (existing) {
+            existing.dispose();
+        }
+        const mgr = new DuckDbManager();
+        await mgr.initialize(env, id);
+        DuckDbManager.instances.set(id, mgr);
+        return mgr;
     }
 
     public static async createIsolated(): Promise<DuckDbManager> {
@@ -75,6 +96,25 @@ export class DuckDbManager {
         mgr.connection = await mgr.db.connect();
         try { await mgr.runQuery("PRAGMA memory_limit='1GB'"); } catch {}
         return mgr;
+    }
+
+    public async connectSession(schemaName: string): Promise<DuckDbManager> {
+        if (!this.db) {
+            throw new Error("DuckDB instance is not initialized.");
+        }
+        const mgr = new DuckDbManager();
+        mgr.db = this.db;
+        mgr.dbPath = this.dbPath;
+        mgr.connection = await this.db.connect();
+        try { await mgr.runQuery(`CREATE SCHEMA IF NOT EXISTS "${schemaName}"`); } catch {}
+        try { await mgr.runQuery(`SET search_path = '${schemaName}', 'main'`); } catch {}
+        return mgr;
+    }
+
+    public async dropSchema(schemaName: string): Promise<void> {
+        try {
+            await this.runQuery(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+        } catch {}
     }
 
     private async initialize(env: IVuraEnvironment, id: string) {
@@ -88,10 +128,8 @@ export class DuckDbManager {
         this.db = await DuckDBInstance.create(this.dbPath);
         this.connection = await this.db.connect();
 
-        // Setup limit to 1GB and load Arrow extension if available
+        // Setup limit to 1GB
         await this.runQuery("PRAGMA memory_limit='1GB'");
-        try { await this.runQuery("INSTALL arrow"); } catch {}
-        try { await this.runQuery("LOAD arrow"); } catch {}
 
         await this.syncStorageViews(env);
     }
@@ -99,12 +137,21 @@ export class DuckDbManager {
     public async syncStorageViews(env: IVuraEnvironment): Promise<void> {
         if (!env.storagePath) return;
         try {
+            const existing = await this.runQuery(
+                `SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'main'`
+            );
+            const baseTables = new Set(
+                existing.filter((r: any) => r.table_type === 'BASE TABLE').map((r: any) => r.table_name)
+            );
+
             const files = await fs.readdir(env.storagePath);
             for (const file of files) {
                 if (file.endsWith('.parquet') && !file.startsWith('__vura_meta_')) {
                     const tableName = file.replace(/\.parquet$/, '');
-                    const parquetPath = path.join(env.storagePath, file);
-                    await this.updateView(tableName, parquetPath);
+                    if (!baseTables.has(tableName)) {
+                        const parquetPath = path.join(env.storagePath, file);
+                        await this.updateView(tableName, parquetPath);
+                    }
                 }
             }
         } catch { }
@@ -159,10 +206,26 @@ export class DuckDbManager {
         }
     }
 
-    /** Export a DuckDB table to a parquet file so the Python sidecar can read it with get_table(). */
+    /** Export a DuckDB table to a parquet file so Python and Node.js sidecars can read it. */
     public async exportTableToParquet(tableName: string, storagePath: string): Promise<void> {
         const parquetPath = path.join(storagePath, `${tableName}.parquet`).replace(/\\/g, '/');
-        await this.runQuery(`COPY "${tableName}" TO '${parquetPath}' (FORMAT PARQUET)`);
+        await this.runQuery(`COPY "${tableName}" TO '${parquetPath}' (FORMAT PARQUET, PARQUET_VERSION 'v1')`);
+    }
+
+    /** Export all base tables in DuckDB to parquet files in storagePath so sidecars (Python/JS) can access them. */
+    public async exportAllTablesToParquet(storagePath: string): Promise<void> {
+        if (!storagePath) return;
+        try {
+            const tables = await this.runQuery(
+                `SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE'`
+            );
+            for (const row of tables) {
+                const tableName = row.table_name;
+                if (tableName && !tableName.startsWith('__vura_meta_')) {
+                    await this.exportTableToParquet(tableName, storagePath);
+                }
+            }
+        } catch { }
     }
 
     public async updateView(viewName: string, parquetFilePath: string): Promise<void> {
@@ -176,6 +239,11 @@ export class DuckDbManager {
     }
 
     public dispose() {
+        for (const [key, instance] of DuckDbManager.instances.entries()) {
+            if (instance === this) {
+                DuckDbManager.instances.delete(key);
+            }
+        }
         if (this.connection) {
             try {
                 if (typeof (this.connection as any).disconnectSync === 'function') {
@@ -187,5 +255,20 @@ export class DuckDbManager {
         if (this.db) {
             this.db = undefined;
         }
+    }
+
+    public static disposeNotebook(notebookId: string) {
+        const mgr = DuckDbManager.instances.get(notebookId);
+        if (mgr) {
+            mgr.dispose();
+            DuckDbManager.instances.delete(notebookId);
+        }
+    }
+
+    public static disposeAll() {
+        for (const mgr of DuckDbManager.instances.values()) {
+            mgr.dispose();
+        }
+        DuckDbManager.instances.clear();
     }
 }

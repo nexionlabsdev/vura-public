@@ -16,21 +16,42 @@ export class VsCodeEnvironment implements IVuraEnvironment {
      */
     constructor(
         private context: vscode.ExtensionContext,
-        private cell?: vscode.NotebookCell
+        cellOrDoc?: any
     ) {
         if (!context.storageUri) {
             throw new Error("Workspace storage is required to run VURA Notebooks.");
         }
-        this.storagePath = context.storageUri.fsPath;
         this.extensionPath = context.extensionPath;
 
         const crypto = require('crypto');
-        if (cell) {
-            this.notebookDir = path.dirname(cell.notebook.uri.fsPath);
-            this.notebookId = crypto.createHash('md5').update(cell.notebook.uri.fsPath).digest('hex');
+        let notebookUri: vscode.Uri | undefined = undefined;
+
+        if (cellOrDoc) {
+            if (cellOrDoc instanceof vscode.Uri) {
+                notebookUri = cellOrDoc;
+            } else if (cellOrDoc.notebook && cellOrDoc.notebook.uri) {
+                notebookUri = cellOrDoc.notebook.uri;
+            } else if (cellOrDoc.notebookEditor && cellOrDoc.notebookEditor.notebook?.uri) {
+                notebookUri = cellOrDoc.notebookEditor.notebook.uri;
+            } else if (cellOrDoc.uri) {
+                notebookUri = cellOrDoc.uri;
+            } else if (cellOrDoc.scheme && cellOrDoc.path) {
+                notebookUri = cellOrDoc as vscode.Uri;
+            }
+        }
+
+        if (!notebookUri) {
+            notebookUri = vscode.window.activeNotebookEditor?.notebook.uri;
+        }
+
+        if (notebookUri) {
+            this.notebookDir = path.dirname(notebookUri.fsPath);
+            this.notebookId = crypto.createHash('md5').update(notebookUri.fsPath).digest('hex');
+            this.storagePath = path.join(context.storageUri.fsPath, 'sessions', this.notebookId);
         } else {
-            this.notebookDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || this.storagePath;
+            this.notebookDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || context.storageUri.fsPath;
             this.notebookId = 'global';
+            this.storagePath = path.join(context.storageUri.fsPath, 'global');
         }
     }
 

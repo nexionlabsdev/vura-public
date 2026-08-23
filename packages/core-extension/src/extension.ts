@@ -266,7 +266,24 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    context.subscriptions.push(executeCmd, cancelCmd, switchProfileCmd, injectSqlCmd, exportCellOutputCmd, copyCellOutputCmd, toggleHttpOutputCmd, deleteHistoryEntryCmd, clearHistoryCmd);
+    const cleanSessionCmd = safeRegisterCommand('vura-notebook.cleanSession', async (cellOrDoc?: any) => {
+        const activeNotebook = vscode.window.activeNotebookEditor?.notebook;
+        const target = cellOrDoc || activeNotebook;
+        try {
+            const env = new VsCodeEnvironment(context, target);
+            if (!env.notebookId || env.notebookId === 'global') {
+                vscode.window.showErrorMessage('No active notebook session to clean.');
+                return;
+            }
+            const { cleanNotebookSession } = require('@vura-data-os/vura-runner');
+            await cleanNotebookSession(env);
+            vscode.window.showInformationMessage(`Notebook session cleaned successfully.`);
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to clean session: ${err.message}`);
+        }
+    });
+
+    context.subscriptions.push(executeCmd, cancelCmd, switchProfileCmd, injectSqlCmd, exportCellOutputCmd, copyCellOutputCmd, toggleHttpOutputCmd, deleteHistoryEntryCmd, clearHistoryCmd, cleanSessionCmd);
 
     return {
         registerProvider: async (id: string, provider: any) => {

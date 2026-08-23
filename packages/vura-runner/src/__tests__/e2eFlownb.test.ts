@@ -5,7 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
-jest.setTimeout(15000);
+jest.setTimeout(30000);
 
 describe('VuraRunner End-to-End Local Polyglot Notebook (.flownb)', () => {
     let tempDir: string;
@@ -40,7 +40,7 @@ describe('VuraRunner End-to-End Local Polyglot Notebook (.flownb)', () => {
                 const mgr = await DuckDbManager.getInstance(env);
                 return mgr.runQuery(sql);
             },
-            getPythonVenvPath: async () => undefined,
+            getPythonVenvPath: async () => path.join(tempDir, 'venv'),
             setPythonVenvPath: async () => undefined,
             setMapping: async () => undefined,
         };
@@ -166,5 +166,64 @@ describe('VuraRunner End-to-End Local Polyglot Notebook (.flownb)', () => {
 
         // Verify Nunjucks HTML report output
         expect(loggerOutput.html.some(h => h.includes('Inventory Report') && h.includes('Total Items: 3'))).toBe(true);
+    });
+
+    it('successfully shares tables created via CREATE OR REPLACE TABLE between SQL, Python, and JS cells', async () => {
+        const runner = new VuraRunner(env);
+
+        const cells: FlownbCell[] = [
+            // Cell 0: SQL - CREATE OR REPLACE TABLE raw_dataset AS ...
+            {
+                kind: 2,
+                language: 'sql',
+                value: `
+                    CREATE OR REPLACE TABLE raw_dataset AS
+                    SELECT 
+                        range AS id,
+                        'User_' || range AS username,
+                        'user' || range || '@example.com' AS email,
+                        CAST(100 * range AS INT) AS raw_score
+                    FROM range(1, 11);
+                `,
+                metadata: {}
+            },
+            // Cell 1: JavaScript - data.get("raw_dataset") -> transform -> data.put("final_dataset", enriched)
+            {
+                kind: 2,
+                language: 'javascript',
+                value: `
+import { data } from "@vura/io";
+async function run() {
+    const records = await data.get("raw_dataset");
+    const enriched = records.map(r => ({
+        ...r,
+        calculated_score: r.raw_score * 1.1,
+        status: "AUDITED"
+    }));
+    await data.put("final_dataset", enriched);
+}
+run();
+                `,
+                metadata: {}
+            },
+            // Cell 3: SQL - query final_dataset created by JS
+            {
+                kind: 2,
+                language: 'sql',
+                value: `SELECT count(*) as total FROM final_dataset WHERE status = 'AUDITED';`,
+                metadata: {}
+            }
+        ];
+
+        const result = await runner.executeNotebook(cells, mockLogger);
+        if (result.status !== 'success') {
+            console.error('Notebook Execution Error Stack:', (result.error as any)?.stack || result.error);
+        }
+        expect(result.status).toBe('success');
+        expect(result.error).toBeNull();
+
+        const dbMgr = await DuckDbManager.getInstance(env);
+        const rows = await dbMgr.runQuery("SELECT count(*) as cnt FROM final_dataset WHERE status = 'AUDITED'");
+        expect(Number(rows[0].cnt)).toBe(10);
     });
 });

@@ -22,6 +22,10 @@ cells:
     metadata: {}
   - kind: 2
     language: sql
+    value: show tables
+    metadata: {}
+  - kind: 2
+    language: sql
     value: SELECT id, name, email, concat(age, ' years') as age FROM users
     metadata: {}
   - kind: 2

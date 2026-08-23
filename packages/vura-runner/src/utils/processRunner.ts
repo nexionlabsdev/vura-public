@@ -93,6 +93,13 @@ export async function runProcess(
             windowsHide: true,
         };
 
+        const fsSync = require('fs');
+        try {
+            if (cwd && !fsSync.existsSync(cwd)) {
+                fsSync.mkdirSync(cwd, { recursive: true });
+            }
+        } catch {}
+
         const child = spawn(finalCmd, args, options);
         let stdout = '';
         let stderr = '';

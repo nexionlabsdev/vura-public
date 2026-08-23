@@ -1,0 +1,149 @@
+version: 1
+cells:
+  - kind: 1
+    language: markdown
+    value: >-
+      ## Large Dataset Generation & Paginated HTTP Flow Sample
+
+      This flow generates 10,000 records in memory via DuckDB, transforms them
+      using Python (pandas) and JavaScript (@vura/io), and returns paginated
+      JSON results based on `page` and `page_size` query parameters passed via
+      the HTTP trigger.
+    metadata: {}
+  - kind: 2
+    language: http-input
+    value: |-
+      {
+        "x-http-method": "get",
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "object",
+            "properties": {
+              "page": { "type": "string" },
+              "page_size": { "type": "string" }
+            }
+          }
+        }
+      }
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: |-
+      -- Step 1: Populate in-memory DuckDB table with 10,000 records
+      CREATE OR REPLACE TABLE raw_dataset AS
+      SELECT 
+        range AS id,
+        'User_' || range AS username,
+        'user' || range || '@example.com' AS email,
+        CAST(1000 + (random() * 9000) AS INT) AS raw_score,
+        CASE 
+          WHEN random() > 0.6 THEN 'Enterprise'
+          WHEN random() > 0.3 THEN 'Pro'
+          ELSE 'Free'
+        END AS plan_tier
+      FROM range(1, 10001);
+    metadata:
+      group: data-prep
+  - kind: 2
+    language: python
+    value: |-
+      # Step 2: Python cell to manipulate data via vura.io
+      from vura.io import data
+      import pandas as pd
+
+      df = data.get("raw_dataset")
+      df["calculated_score"] = (df["raw_score"] * 1.10).round(2)
+      df["status"] = "Verified"
+
+      data.put("python_processed", df)
+      print(f"Python processed {len(df)} records into 'python_processed'.")
+    metadata:
+      group: data-prep
+  - kind: 2
+    language: javascript
+    value: >-
+      // Step 3: JS cell to manipulate data via @vura/io
+
+      import { data } from "@vura/io";
+
+
+      async function processInJs() {
+        const records = await data.get("python_processed");
+        console.log(`JS received ${records.length} records from Python processing.`);
+        
+        const enriched = records.map(r => ({
+          ...r,
+          is_high_tier: r.plan_tier === "Enterprise" || r.plan_tier === "Pro",
+          audit_tag: `JS_AUDITED_${Date.now()}`
+        }));
+        
+        await data.put("final_dataset", enriched);
+        console.log("JS data enrichment complete. Saved to 'final_dataset'.");
+      }
+
+
+      processInJs().catch(console.error);
+    metadata:
+      group: data-prep
+  - kind: 2
+    language: sql
+    value: >-
+      -- Step 4: Apply pagination based on page & page_size query parameters
+
+      CREATE OR REPLACE TABLE paginated_output AS
+
+      WITH params AS (
+        SELECT 
+          COALESCE(TRY_CAST(query.page AS INT), 1) as current_page,
+          COALESCE(TRY_CAST(query.page_size AS INT), 10) as page_size
+        FROM http_request
+      )
+
+      SELECT 
+        f.id,
+        f.username,
+        f.email,
+        f.raw_score,
+        f.calculated_score,
+        f.status,
+        f.plan_tier,
+        f.is_high_tier,
+        f.audit_tag,
+        p.current_page,
+        p.page_size,
+        (SELECT COUNT(*) FROM final_dataset) as total_count,
+        CAST(CEIL((SELECT COUNT(*) FROM final_dataset)::DOUBLE / p.page_size) AS INT) as total_pages
+      FROM final_dataset f, params p
+
+      ORDER BY f.id ASC
+
+      LIMIT (SELECT page_size FROM params)
+
+      OFFSET ((SELECT current_page FROM params) - 1) * (SELECT page_size FROM
+      params);
+    metadata:
+      group: api-handler
+  - kind: 2
+    language: json
+    value: >-
+      {
+        "$headers": {
+          "Content-Type": "application/json",
+          "X-Vura-Flow": "Paginated 10k Sample"
+        },
+        "$body": {
+          "status": "success",
+          "pagination": {
+            "$query": "SELECT current_page, page_size, total_count, total_pages FROM paginated_output LIMIT 1",
+            "$as": "single"
+          },
+          "data": {
+            "$query": "SELECT id, username, email, raw_score, calculated_score, status, plan_tier, is_high_tier, audit_tag FROM paginated_output",
+            "$as": "array"
+          }
+        }
+      }
+    metadata:
+      group: api-handler
+      vura_is_http_output: true

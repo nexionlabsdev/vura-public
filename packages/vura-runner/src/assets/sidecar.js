@@ -2,8 +2,33 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const readline = require('readline');
-const crypto = require('crypto');
-const parquet = require('parquetjs-lite');
+const { DuckDBInstance } = require('@duckdb/node-api');
+const arrow = require('apache-arrow');
+
+function normalizeValue(val) {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'bigint') {
+        const num = Number(val);
+        return Number.isSafeInteger(num) ? num : val.toString();
+    }
+    if (typeof val === 'object') {
+        if (val.entries && typeof val.entries === 'object') {
+            const res = {};
+            for (const [k, v] of Object.entries(val.entries)) {
+                res[k] = normalizeValue(v);
+            }
+            return res;
+        }
+        if (Array.isArray(val)) return val.map(normalizeValue);
+        if (val instanceof Date) return val.toISOString();
+        const res = {};
+        for (const [k, v] of Object.entries(val)) {
+            res[k] = normalizeValue(v);
+        }
+        return res;
+    }
+    return val;
+}
 
 class Shredder {
     static shredJson(datasetName, obj) {
@@ -108,14 +133,22 @@ class Shredder {
     }
 
     static unshredJson(manifest, tables) {
+        const rowIndexes = new Map();
+        for (const [tName, rows] of Object.entries(tables)) {
+            const byParent = new Map();
+            for (const r of (rows || [])) {
+                const pId = (!r._vura_parent_id || r._vura_parent_id === 'null') ? null : r._vura_parent_id;
+                if (!byParent.has(pId)) byParent.set(pId, []);
+                byParent.get(pId).push(r);
+            }
+            rowIndexes.set(tName, byParent);
+        }
+
         function reconstructNode(tableName, parentId) {
             const meta = manifest.tables[tableName];
             if (!meta) return null;
 
-            const tableRows = (tables[tableName] || []).filter(
-                r => (parentId === null ? (!r._vura_parent_id || r._vura_parent_id === 'null') : r._vura_parent_id === parentId)
-            );
-
+            const tableRows = rowIndexes.get(tableName)?.get(parentId) || [];
             tableRows.sort((a, b) => (a._vura_index ?? 0) - (b._vura_index ?? 0));
 
             if (meta.node_type === 'primitive_array') {
@@ -179,80 +212,126 @@ class DataManager {
         }
     }
 
-    getParquetPath(tableName) {
-        return path.join(this.storagePath, `${tableName}.parquet`);
+    get currentStoragePath() {
+        return process.env.VURA_STORAGE_PATH || this.storagePath;
+    }
+
+    get thresholdBytes() {
+        const envVal = process.env.VURA_ARROW_THRESHOLD_BYTES;
+        if (envVal) {
+            const parsed = parseInt(envVal, 10);
+            if (!isNaN(parsed) && parsed >= 0) return parsed;
+        }
+        return 5 * 1024 * 1024; // Default 5 MB
+    }
+
+    getTablePath(tableName, ext) {
+        return path.join(this.currentStoragePath, `${tableName}.${ext}`);
+    }
+
+    findExistingTablePath(tableName) {
+        let baseName = tableName.replace(/\.(arrow|parquet)$/, '');
+        let arrowPath = this.getTablePath(baseName, 'arrow');
+        let parquetPath = this.getTablePath(baseName, 'parquet');
+
+        if (fs.existsSync(arrowPath)) return { filePath: arrowPath, format: 'arrow' };
+        if (fs.existsSync(parquetPath)) return { filePath: parquetPath, format: 'parquet' };
+
+        if (fs.existsSync(this.currentStoragePath)) {
+            const files = fs.readdirSync(this.currentStoragePath);
+            const lowerBase = baseName.toLowerCase();
+            const foundArrow = files.find(f => f.toLowerCase() === `${lowerBase}.arrow`);
+            if (foundArrow) return { filePath: path.join(this.currentStoragePath, foundArrow), format: 'arrow' };
+            const foundParquet = files.find(f => f.toLowerCase() === `${lowerBase}.parquet`);
+            if (foundParquet) return { filePath: path.join(this.currentStoragePath, foundParquet), format: 'parquet' };
+        }
+        return null;
     }
 
     emitMapping(variableName, filePath) {
         process.stderr.write(JSON.stringify({ type: 'vura_io_mapping', variable: variableName, path: filePath }) + '\n');
     }
 
-    async writeTableParquet(tableName, records) {
-        const filePath = this.getParquetPath(tableName);
-        if (!records || records.length === 0) {
-            const schema = new parquet.ParquetSchema({
-                _vura_id: { type: 'UTF8', optional: true },
-                _vura_parent_id: { type: 'UTF8', optional: true },
-                _vura_index: { type: 'DOUBLE', optional: true },
-                _vura_value: { type: 'UTF8', optional: true }
-            });
-            const writer = await parquet.ParquetWriter.openFile(schema, filePath);
-            await writer.close();
-            return;
+    async getDuckDbConn() {
+        if (!this.duckDbConn) {
+            this.duckDbInstance = await DuckDBInstance.create(':memory:');
+            this.duckDbConn = await this.duckDbInstance.connect();
         }
-
-        const schemaObj = {};
-        for (const key of Object.keys(records[0])) {
-            let sampleVal = null;
-            for (const row of records) {
-                if (row[key] !== null && row[key] !== undefined) {
-                    sampleVal = row[key];
-                    break;
-                }
-            }
-            if (typeof sampleVal === 'number') {
-                schemaObj[key] = { type: 'DOUBLE', optional: true };
-            } else if (typeof sampleVal === 'boolean') {
-                schemaObj[key] = { type: 'BOOLEAN', optional: true };
-            } else {
-                schemaObj[key] = { type: 'UTF8', optional: true };
-            }
-        }
-
-        const schema = new parquet.ParquetSchema(schemaObj);
-        const writer = await parquet.ParquetWriter.openFile(schema, filePath);
-
-        for (const row of records) {
-            const cleanRow = {};
-            for (const key of Object.keys(schemaObj)) {
-                const val = row[key];
-                if (val === null || val === undefined) {
-                    cleanRow[key] = null;
-                } else if (schemaObj[key].type === 'UTF8') {
-                    cleanRow[key] = String(val);
-                } else {
-                    cleanRow[key] = val;
-                }
-            }
-            await writer.appendRow(cleanRow);
-        }
-        await writer.close();
+        return this.duckDbConn;
     }
 
-    async readTableParquet(tableName) {
-        const filePath = this.getParquetPath(tableName);
-        if (!fs.existsSync(filePath)) {
-            return [];
+    async writeTableData(tableName, records) {
+        const recordsToWrite = (!records || records.length === 0)
+            ? [{ _vura_id: null, _vura_parent_id: null, _vura_index: null, _vura_value: null }]
+            : records;
+
+        const jsonStr = JSON.stringify(recordsToWrite, (k, v) => typeof v === 'bigint' ? Number(v) : v);
+        const parquetPath = this.getTablePath(tableName, 'parquet');
+        const conn = await this.getDuckDbConn();
+        const tempJson = path.join(this.currentStoragePath, `_temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.json`);
+        await fs.promises.writeFile(tempJson, jsonStr, 'utf8');
+
+        try {
+            const safeTemp = tempJson.replace(/\\/g, '/');
+            const safeTarget = parquetPath.replace(/\\/g, '/');
+            await conn.runAndReadAll(`COPY (SELECT * FROM read_json_auto('${safeTemp}')) TO '${safeTarget}' (FORMAT PARQUET)`);
+        } finally {
+            await fs.promises.unlink(tempJson).catch(() => {});
         }
-        const reader = await parquet.ParquetReader.openFile(filePath);
-        const cursor = reader.getCursor();
-        const records = [];
-        let record = null;
-        while ((record = await cursor.next())) {
-            records.push(record);
+
+        return parquetPath;
+    }
+
+    async readTableData(tableName) {
+        const tableInfo = this.findExistingTablePath(tableName);
+        if (!tableInfo) return [];
+
+        const conn = await this.getDuckDbConn();
+        const safePath = tableInfo.filePath.replace(/\\/g, '/');
+        let readQuery = tableInfo.format === 'arrow'
+            ? `SELECT * FROM read_ipc('${safePath}')`
+            : `SELECT * FROM read_parquet('${safePath}')`;
+
+        let reader;
+        try {
+            reader = await conn.runAndReadAll(readQuery);
+        } catch (e) {
+            if (tableInfo.format === 'arrow') {
+                const fallbackParquet = this.getTablePath(tableName.replace(/\.arrow$/, ''), 'parquet');
+                if (fs.existsSync(fallbackParquet)) {
+                    reader = await conn.runAndReadAll(`SELECT * FROM read_parquet('${fallbackParquet.replace(/\\/g, '/')}')`);
+                } else {
+                    throw e;
+                }
+            } else {
+                throw e;
+            }
         }
-        await reader.close();
-        return records;
+
+        const colNames = reader.columnNames();
+        const rows = reader.getRows();
+        const numCols = colNames.length;
+        const result = new Array(rows.length);
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const obj = {};
+            for (let j = 0; j < numCols; j++) {
+                const val = row[j];
+                if (val === null || val === undefined) {
+                    obj[colNames[j]] = null;
+                } else if (typeof val === 'bigint') {
+                    const num = Number(val);
+                    obj[colNames[j]] = Number.isSafeInteger(num) ? num : val.toString();
+                } else if (typeof val === 'object') {
+                    obj[colNames[j]] = normalizeValue(val);
+                } else {
+                    obj[colNames[j]] = val;
+                }
+            }
+            result[i] = obj;
+        }
+        return result;
     }
 
     async pack(name, obj) {
@@ -260,20 +339,20 @@ class DataManager {
         this.manifests.set(name, manifest);
 
         for (const [tableName, records] of Object.entries(tables)) {
-            await this.writeTableParquet(tableName, records);
-            this.emitMapping(tableName, this.getParquetPath(tableName));
-
+            await this.writeTableData(tableName, records);
+            const parquetPath = this.getTablePath(tableName, 'parquet');
+            this.emitMapping(tableName, parquetPath);
             if (tableName.startsWith(`${name}_`)) {
                 const shortKey = tableName.substring(name.length + 1);
                 if (shortKey) {
-                    this.emitMapping(shortKey, this.getParquetPath(tableName));
+                    this.emitMapping(shortKey, parquetPath);
                 }
             }
         }
 
         const metaTableName = `__vura_meta_${name}`;
         const metaRecords = [{ manifest: JSON.stringify(manifest) }];
-        await this.writeTableParquet(metaTableName, metaRecords);
+        await this.writeTableData(metaTableName, metaRecords);
 
         return tableNames;
     }
@@ -282,7 +361,7 @@ class DataManager {
         let manifest = this.manifests.get(name);
         if (!manifest) {
             const metaTableName = `__vura_meta_${name}`;
-            const metaRecords = await this.readTableParquet(metaTableName);
+            const metaRecords = await this.readTableData(metaTableName);
             if (!metaRecords || metaRecords.length === 0 || !metaRecords[0].manifest) {
                 throw new Error(`Dataset metadata for '${name}' not found.`);
             }
@@ -292,7 +371,7 @@ class DataManager {
 
         const tables = {};
         for (const tableName of Object.keys(manifest.tables)) {
-            tables[tableName] = await this.readTableParquet(tableName);
+            tables[tableName] = await this.readTableData(tableName);
         }
 
         return Shredder.unshredJson(manifest, tables);
@@ -301,10 +380,11 @@ class DataManager {
     async put(name, obj) {
         const isNested = (val) => {
             if (!val || typeof val !== 'object') return false;
-            if (Array.isArray(val)) {
-                return val.some(item => item && typeof item === 'object');
-            }
-            return Object.values(val).some(v => v && typeof v === 'object');
+            const list = Array.isArray(val) ? val : [val];
+            return list.some(item =>
+                item && typeof item === 'object' && !Array.isArray(item) && !(item instanceof Date) &&
+                Object.values(item).some(v => v !== null && typeof v === 'object' && !(v instanceof Date))
+            );
         };
 
         if (isNested(obj)) {
@@ -312,25 +392,25 @@ class DataManager {
         }
 
         const records = Array.isArray(obj) ? obj : [obj];
-        await this.writeTableParquet(name, records);
-        const filePath = this.getParquetPath(name);
-        this.emitMapping(name, filePath);
+        await this.writeTableData(name, records);
+        const parquetPath = this.getTablePath(name, 'parquet');
+        this.emitMapping(name, parquetPath);
         return [name];
     }
 
     async get(name) {
         const metaTableName = `__vura_meta_${name}`;
-        const metaPath = this.getParquetPath(metaTableName);
-        if (fs.existsSync(metaPath) || this.manifests.has(name)) {
+        const metaInfo = this.findExistingTablePath(metaTableName);
+        if (metaInfo || this.manifests.has(name)) {
             return await this.unpack(name);
         }
-        return await this.readTableParquet(name);
+        return await this.readTableData(name);
     }
 
     async tables(name) {
         if (name) {
             const metaTableName = `__vura_meta_${name}`;
-            const metaRecords = await this.readTableParquet(metaTableName);
+            const metaRecords = await this.readTableData(metaTableName);
             if (metaRecords && metaRecords.length > 0 && metaRecords[0].manifest) {
                 const manifest = JSON.parse(metaRecords[0].manifest);
                 return Object.keys(manifest.tables);
@@ -338,10 +418,10 @@ class DataManager {
             return [name];
         }
 
-        if (!fs.existsSync(this.storagePath)) return [];
-        return fs.readdirSync(this.storagePath)
-            .filter(f => f.endsWith('.parquet'))
-            .map(f => f.replace(/\.parquet$/, ''))
+        if (!fs.existsSync(this.currentStoragePath)) return [];
+        return fs.readdirSync(this.currentStoragePath)
+            .filter(f => (f.endsWith('.parquet') || f.endsWith('.arrow')))
+            .map(f => f.replace(/\.(parquet|arrow)$/, ''))
             .filter(f => !f.startsWith('__vura_meta_'));
     }
 }
@@ -430,11 +510,12 @@ async function serveForever(data, state, metrics) {
             const context = vm.createContext(sandbox);
             await script.runInContext(context);
 
-            for (let i = 0; i < 200 && data.pendingCalls.size > 0; i++) {
-                await Promise.race([
-                    Promise.allSettled([...data.pendingCalls]),
-                    new Promise((r) => setTimeout(r, 25))
-                ]);
+            for (let i = 0; i < 50; i++) {
+                if (data.pendingCalls.size === 0) {
+                    await new Promise(r => setImmediate(r));
+                    if (data.pendingCalls.size === 0) break;
+                }
+                await Promise.allSettled([...data.pendingCalls]);
             }
         } catch (e) {
             status = 'error';

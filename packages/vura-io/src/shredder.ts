@@ -138,14 +138,23 @@ export function shredJson(datasetName: string, obj: any): ShredResult {
 }
 
 export function unshredJson(manifest: Manifest, tables: Record<string, any[]>): any {
+    const rowIndexes = new Map<string, Map<string | null, any[]>>();
+    for (const [tName, rows] of Object.entries(tables)) {
+        const byParent = new Map<string | null, any[]>();
+        for (const r of (rows || [])) {
+            const pId = (!r._vura_parent_id || r._vura_parent_id === 'null') ? null : String(r._vura_parent_id);
+            if (!byParent.has(pId)) byParent.set(pId, []);
+            byParent.get(pId)!.push(r);
+        }
+        rowIndexes.set(tName, byParent);
+    }
+
     function reconstructNode(tableName: string, parentId: string | null): any {
         const meta = manifest.tables[tableName];
         if (!meta) return null;
 
-        const tableRows = (tables[tableName] || []).filter(
-            r => (parentId === null ? (!r._vura_parent_id || r._vura_parent_id === 'null') : r._vura_parent_id === parentId)
-        );
-
+        const pKey = parentId === null ? null : String(parentId);
+        const tableRows = rowIndexes.get(tableName)?.get(pKey) || [];
         tableRows.sort((a, b) => (a._vura_index ?? 0) - (b._vura_index ?? 0));
 
         if (meta.node_type === 'primitive_array') {

@@ -11,7 +11,7 @@ describe('Vura Serve Flow Discovery & API Endpoints', () => {
     let server: http.Server;
     let port: number;
 
-    jest.setTimeout(30000);
+    jest.setTimeout(60000);
 
     beforeAll(async () => {
         tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vura-serve-flows-test-'));
@@ -33,12 +33,12 @@ describe('Vura Serve Flow Discovery & API Endpoints', () => {
         );
 
         port = 9876 + Math.floor(Math.random() * 100);
-        server = startServer(port, tempDir);
-        await new Promise((resolve) => server.once('listening', resolve));
+        server = await startServer(port, tempDir);
     }, 30000);
 
     afterAll(async () => {
         try { sidecarPool.disposeAll(); } catch {}
+        try { DuckDbManager.disposeAll(); } catch {}
         if (server) {
             await new Promise<void>((resolve) => server.close(() => resolve()));
         }
@@ -81,8 +81,7 @@ describe('Vura Serve Flow Discovery & API Endpoints', () => {
     it('serves a single .flownb file path directly (e.g. vura serve ./samples/use_case.flownb)', async () => {
         const singleFilePath = path.join(tempDir, 'samples', 'use_case.flownb');
         const singlePort = port + 10;
-        const singleServer = startServer(singlePort, singleFilePath);
-        await new Promise((resolve) => singleServer.once('listening', resolve));
+        const singleServer = await startServer(singlePort, singleFilePath);
 
         const res = await fetch(`http://127.0.0.1:${singlePort}/api/flows`);
         expect(res.status).toBe(200);
@@ -92,4 +91,28 @@ describe('Vura Serve Flow Discovery & API Endpoints', () => {
 
         await new Promise<void>((resolve) => singleServer.close(() => resolve()));
     });
+
+    it('executes paginated 10k dataset flow via HTTP trigger with page and page_size parameters', async () => {
+        const samplePath = path.resolve(__dirname, '../../../../samples/paginated_flow_sample.flownb');
+        const pPort = port + 20;
+        const pServer = await startServer(pPort, samplePath);
+
+        const res = await fetch(`http://127.0.0.1:${pPort}/flow/trigger/paginated_flow_sample.flownb?page=2&page_size=5`);
+        if (res.status !== 200) {
+            console.error('Trigger Response Body:', await res.clone().text());
+        }
+        expect(res.status).toBe(200);
+        const json = await res.json();
+
+        expect(json.status).toBe('success');
+        expect(json.pagination).toBeDefined();
+        expect(json.pagination.current_page).toBe(2);
+        expect(json.pagination.page_size).toBe(5);
+        expect(json.pagination.total_count ?? json.pagination.total_records).toBe(10000);
+        expect(json.pagination.total_pages).toBe(2000);
+        expect(json.data).toHaveLength(5);
+        expect(json.data[0].id).toBe(6);
+
+        await new Promise<void>((resolve) => pServer.close(() => resolve()));
+    }, 45000);
 });

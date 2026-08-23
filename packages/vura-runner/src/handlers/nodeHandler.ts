@@ -91,9 +91,16 @@ export async function handleNode(
     const depthLimit = env.getConfig<number>('vura.depthLimit', 5);
     const poolKey = `${env.notebookId}:node`;
     const nodeBin = process.execPath || 'node';
+    const extraNodePaths = [
+        ...(module.paths || []),
+        path.join(__dirname, '..', '..', 'node_modules'),
+        path.join(__dirname, '..', '..', '..', 'node_modules'),
+        process.env.NODE_PATH
+    ].filter(Boolean).join(path.delimiter);
+
     const worker = await sidecarPool.acquire(poolKey, () => spawn(nodeBin, [sidecarScript, '--serve'], {
         cwd: env.notebookDir,
-        env: { ...process.env, VURA_STORAGE_PATH: env.storagePath },
+        env: { ...process.env, VURA_STORAGE_PATH: env.storagePath, NODE_PATH: extraNodePaths },
         windowsHide: true
     }));
 
@@ -101,7 +108,7 @@ export async function handleNode(
         const response = await sidecarPool.send(worker, {
             code,
             filename: cellFilename,
-            env: { VURA_DATAVERSE_TOKEN: activeToken, VURA_DEPTH_LIMIT: depthLimit.toString() }
+            env: { VURA_STORAGE_PATH: env.storagePath, VURA_DATAVERSE_TOKEN: activeToken, VURA_DEPTH_LIMIT: depthLimit.toString() }
         });
 
         // Pull the vura_bridge_mapping bookkeeping lines out of stderr before

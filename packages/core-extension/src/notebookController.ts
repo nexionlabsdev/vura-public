@@ -166,6 +166,13 @@ export class NotebookController {
                 const env = new VsCodeEnvironment(this.context, cell);
                 const logger = new VsCodeCellLogger(execution);
 
+                if (commandRoot === '!clean_session' || commandRoot === '!clean-session') {
+                    const { cleanNotebookSession } = require('@vura-data-os/vura-runner');
+                    await cleanNotebookSession(env);
+                    await logger.logText('Notebook session cleaned successfully.');
+                    continue;
+                }
+
                 if (commandRoot === '!ingest-file') {
                     try {
                         // Regex to parse: !ingest-file "path" type "sheet" -> targetTable
