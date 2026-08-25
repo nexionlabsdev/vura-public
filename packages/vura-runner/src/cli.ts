@@ -331,6 +331,9 @@ program.command('execute')
                         await page.screenshot({ path: pngPath, fullPage: true });
                         await browser.close();
                         console.log(`Exported PNG to ${pngPath}`);
+                        const duckDb = await (runner as any)._getDuckDb();
+                        const targetCellIndex = options.cell ? parseInt(options.cell, 10) - 1 : 0;
+                        await duckDb.registerVisualOutputTable(targetCellIndex, 'png', pngPath, env.storagePath);
                     } catch (err: any) {
                         console.error('Failed to export PNG. Is Chrome/Edge installed?', err.message);
                     }
@@ -346,6 +349,9 @@ program.command('execute')
                         await page.pdf({ path: pdfPath, format: 'A4', printBackground: true });
                         await browser.close();
                         console.log(`Exported PDF to ${pdfPath}`);
+                        const duckDb = await (runner as any)._getDuckDb();
+                        const targetCellIndex = options.cell ? parseInt(options.cell, 10) - 1 : 0;
+                        await duckDb.registerVisualOutputTable(targetCellIndex, 'pdf', pdfPath, env.storagePath);
                     } catch (err: any) {
                         console.error('Failed to export PDF. Is Chrome/Edge installed?', err.message);
                     }
