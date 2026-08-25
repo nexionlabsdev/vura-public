@@ -4,25 +4,14 @@
   "type": "object",
   "required": ["id", "code"],
   "properties": {
-    "id": {
-      "type": "string"
-    },
-    "code": {
-      "type": "string"
-    },
-    "filename": {
-      "type": "string"
-    },
+    "id": { "type": "string" },
+    "code": { "type": "string" },
+    "filename": { "type": "string" },
     "ctx": {
       "type": "object",
       "properties": {
-        "token": {
-          "type": "string"
-        },
-        "depthLimit": {
-          "type": "integer",
-          "minimum": 1
-        }
+        "token": { "type": "string" },
+        "depthLimit": { "type": "integer", "minimum": 1 }
       },
       "additionalProperties": false
     }

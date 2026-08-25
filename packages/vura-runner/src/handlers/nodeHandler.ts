@@ -113,7 +113,7 @@ export async function handleNode(
         const response = await sidecarPool.send(worker, {
             code,
             filename: cellFilename,
-            env: { VURA_STORAGE_PATH: env.storagePath, VURA_DATAVERSE_TOKEN: activeToken, VURA_DEPTH_LIMIT: depthLimit.toString() }
+            ctx: { token: activeToken, depthLimit }
         });
 
         // Pull the vura_bridge_mapping bookkeeping lines out of stderr before
