@@ -160,6 +160,13 @@ class DataManager:
     def __init__(self, storage_path):
         self.storage_path = storage_path
         self._manifests = {}
+        self._duckdb_conn = None
+
+    def _get_duckdb_conn(self):
+        if self._duckdb_conn is None:
+            import duckdb
+            self._duckdb_conn = duckdb.connect()
+        return self._duckdb_conn
 
     def _get_pd(self):
         global pd
@@ -388,7 +395,7 @@ class DataManager:
             raise ValueError("Update requires at least one key in 'on'.")
 
         import duckdb
-        conn = duckdb.connect()
+        conn = self._get_duckdb_conn()
         curr_pd = self._get_pd()
         import pyarrow as pa
 
@@ -401,7 +408,7 @@ class DataManager:
 
         safe_file_path = file_path.replace("\\", "/")
         conn.register("stage_df", stage_df)
-        conn.execute(f"CREATE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+        conn.execute(f"CREATE OR REPLACE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
 
         stage_cols = list(stage_df.columns)
         non_key_cols = [c for c in stage_cols if c not in keys]
@@ -419,7 +426,6 @@ class DataManager:
         parquet_path = self._get_table_path(name, 'parquet')
         safe_target = parquet_path.replace("\\", "/")
         conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
-        conn.close()
 
         self._emit_mapping(name, parquet_path)
         return [name]
@@ -434,7 +440,7 @@ class DataManager:
             raise ValueError("Upsert requires at least one key in 'on'.")
 
         import duckdb
-        conn = duckdb.connect()
+        conn = self._get_duckdb_conn()
         curr_pd = self._get_pd()
         import pyarrow as pa
 
@@ -447,7 +453,7 @@ class DataManager:
 
         safe_file_path = file_path.replace("\\", "/")
         conn.register("stage_df", stage_df)
-        conn.execute(f"CREATE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+        conn.execute(f"CREATE OR REPLACE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
 
         stage_cols = list(stage_df.columns)
         non_key_cols = [c for c in stage_cols if c not in keys]
@@ -470,7 +476,6 @@ class DataManager:
         parquet_path = self._get_table_path(name, 'parquet')
         safe_target = parquet_path.replace("\\", "/")
         conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
-        conn.close()
 
         self._emit_mapping(name, parquet_path)
         return [name]
