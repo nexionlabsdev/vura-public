@@ -89,6 +89,26 @@ export class DuckDbManager {
         return mgr;
     }
 
+    /**
+     * Executes an async function with an isolated in-memory DuckDbManager instance and guarantees disposal upon completion or error.
+     */
+    public static async withIsolated<T>(
+        fn: (mgr: DuckDbManager) => Promise<T>,
+        env?: IVuraEnvironment
+    ): Promise<T> {
+        const mgr = await DuckDbManager.createIsolated(env);
+        try {
+            return await fn(mgr);
+        } finally {
+            mgr.dispose();
+        }
+    }
+
+    /**
+     * Creates an isolated in-memory DuckDbManager instance.
+     * Note: Callers of `createIsolated()` are responsible for calling `dispose()` on the returned instance.
+     * `DuckDbManager.withIsolated()` is preferred for new code to ensure automatic resource cleanup.
+     */
     public static async createIsolated(env?: IVuraEnvironment): Promise<DuckDbManager> {
         const mgr = new DuckDbManager();
         mgr.dbPath = ':memory:';

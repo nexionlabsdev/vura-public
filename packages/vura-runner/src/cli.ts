@@ -359,11 +359,11 @@ program.command('execute')
             }
 
             console.log('\nExecution complete.');
-            sidecarPool.disposeAll();
+            await sidecarPool.disposeAll();
             process.exit(0);
         } catch (e: any) {
             console.error('\nExecution failed:', e.message || e);
-            sidecarPool.disposeAll();
+            await sidecarPool.disposeAll();
             process.exit(1);
         }
     });

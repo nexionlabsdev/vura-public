@@ -440,13 +440,12 @@ export async function startServer(port: number, dir: string, envPath?: string, m
             const mark1 = Date.now();
 
             const httpRequestContext = { query: req.query, body: req.body || {}, headers: req.headers, method: req.method };
-            let sessionDuckDb: DuckDbManager | null = null;
             const schemaName = `session_${runId}`;
             const runStoragePath = path.join(env.storagePath, 'runs', runId);
 
             try {
                 await fs.mkdir(runStoragePath, { recursive: true });
-                sessionDuckDb = await DuckDbManager.createIsolated(env);
+                return await DuckDbManager.withIsolated(async (sessionDuckDb) => {
                 const mark2 = Date.now();
 
                 const requestEnv = Object.create(env);
@@ -553,6 +552,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                 return res.status(500).json({ error: execResult.error });
             }
             return res.json({ success: true, message: 'Flow executed successfully' });
+            }, env);
 
         } catch (err: any) {
             const duration = Date.now() - startTime;
@@ -564,10 +564,6 @@ export async function startServer(port: number, dir: string, envPath?: string, m
             
             return res.status(500).json({ error: errMsg });
         } finally {
-            if (sessionDuckDb) {
-                await sessionDuckDb.dropSchema(schemaName).catch(() => {});
-                sessionDuckDb.dispose();
-            }
             try {
                 await fs.rm(runStoragePath, { recursive: true, force: true });
             } catch {}
@@ -624,7 +620,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                     if (str === 'R' || str === 'r') {
                         console.log(`\n${colors.bold}${colors.brightYellow}⚡ [FULL RELOAD] Recompiling notebooks and restarting warm sidecar processes...${colors.reset}`);
                         try {
-                            sidecarPool.disposeAll();
+                            await sidecarPool.disposeAll();
                             activeManifest = await compileTarget(targetPath, envPath, { quiet: true });
                             if (activeManifest) {
                                 await warmSidecars(env, activeManifest);
@@ -641,7 +637,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
 
         // Warm sidecar workers persist across requests (that's the point of the pool) —
         // only reap them on an actual shutdown, not per-request.
-        const shutdown = () => {
+        const shutdown = async () => {
             console.log(`\n${colors.bold}${colors.brightRed}Shutting down VURA API Server...${colors.reset}`);
             try {
                 if (process.stdin.isTTY) {
@@ -649,7 +645,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                     process.stdin.pause();
                 }
             } catch {}
-            try { sidecarPool.disposeAll(); } catch {}
+            try { await sidecarPool.disposeAll(); } catch {}
             try { DuckDbManager.disposeAll(); } catch {}
             if (typeof (server as any).closeAllConnections === 'function') {
                 (server as any).closeAllConnections();
