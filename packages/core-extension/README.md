@@ -6,7 +6,7 @@ This is the **kernel** in VURA's micro-kernel architecture: it renders `.flownb`
 
 ## Features
 
-- **Polyglot notebook cells** — SQL (multi-auth TDS/MSSQL), Python and JavaScript (via gRPC sidecars sharing data through DuckDB/Parquet, zero-copy), HTML (Vega-Lite charts, PDF export), and `vura-terminal` for `!magic commands`.
+- **Polyglot notebook cells** — SQL (multi-auth TDS/MSSQL), Python and JavaScript (via stdio/JSON sidecars communicating over stdin/stdout and sharing data through DuckDB/Parquet, zero-copy), HTML (Vega-Lite charts, PDF export), and `vura-terminal` for `!magic commands`. An earlier design used Apache Arrow Flight (gRPC-based) for sidecar communication; this was replaced with local stdio/JSON specifically for VS Code extension and Windows compatibility.
 - **Connection management** — SQL connection profiles across four auth modes (Service Principal, Device Code, SQL Login, Windows Auth), stored in VS Code's `globalState`/`SecretStorage`.
 - **Auto-Schema Flattener** — ingest nested JSON/CSV/Excel/Parquet files directly into relational DuckDB tables via `!ingest-file`.
 - **Query history and schema explorer** — dedicated sidebar views for SQL connections.

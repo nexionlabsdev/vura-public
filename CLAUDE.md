@@ -73,8 +73,8 @@ make build-windows   # win32-x64 and win32-arm64
 .flownb notebook
   └─ NotebookController (packages/core-extension/src/notebookController.ts)
        ├─ SQL cells        → sqlService.ts (TDS/MSSQL, multi-auth)
-       ├─ Python cells     → Python gRPC sidecar
-       ├─ JavaScript cells → Node gRPC sidecar
+       ├─ Python cells     → Python stdio/JSON sidecar
+       ├─ JavaScript cells → Node stdio/JSON sidecar
        ├─ HTML cells       → templateHandler.ts (Vega-Lite, PDF export)
        └─ !magic commands  → ProviderRegistry.getProviderForCommand() → IVuraProvider.handleCommand()
 ```

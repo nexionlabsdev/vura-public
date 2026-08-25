@@ -585,7 +585,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
             console.log(`${colors.brightCyan}🌐 Dashboard available at http://localhost:${port}/${colors.reset}`);
             if (process.stdin.isTTY) {
                 console.log(`\n${colors.bold}${colors.brightCyan}⌨️  Interactive Terminal Controls:${colors.reset}`);
-                console.log(`  ${colors.brightGreen}Ctrl + R (\\x12)${colors.reset}       : Hot reload .flownb definition (keeps warm gRPC sidecars)`);
+                console.log(`  ${colors.brightGreen}Ctrl + R (\\x12)${colors.reset}       : Hot reload .flownb definition (keeps warm sidecars)`);
                 console.log(`  ${colors.brightYellow}Shift + R${colors.reset}             : Full recompilation and sidecar restart`);
                 console.log(`  ${colors.brightRed}Ctrl + C (\\x03)${colors.reset}       : Graceful shutdown\n`);
             }
