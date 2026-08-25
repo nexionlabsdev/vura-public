@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "vura://table/manifest.schema.json",
+  "type": "object",
+  "required": ["version", "tableName", "rowCount", "parts", "schema"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "tableName": {
+      "type": "string"
+    },
+    "rowCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "compacted": {
+      "type": "boolean",
+      "default": false
+    },
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "rowCount"],
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "rowCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "schema": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}
