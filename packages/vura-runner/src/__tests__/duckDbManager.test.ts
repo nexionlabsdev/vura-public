@@ -54,6 +54,28 @@ describe('DuckDbManager (@duckdb/node-api)', () => {
         iso.dispose();
     });
 
+    it('withIsolated disposes its instance even when fn resolves or throws', async () => {
+        let capturedMgr: DuckDbManager | undefined;
+        const result = await DuckDbManager.withIsolated(async (mgr) => {
+            capturedMgr = mgr;
+            await mgr.runQuery('CREATE TABLE with_iso_test (val INT)');
+            await mgr.runQuery('INSERT INTO with_iso_test VALUES (42)');
+            const rows = await mgr.runQuery('SELECT * FROM with_iso_test');
+            return rows[0].val;
+        });
+        expect(result).toBe(42);
+        expect(capturedMgr).toBeDefined();
+        await expect(capturedMgr!.runQuery('SELECT 1')).rejects.toThrow();
+
+        let errorMgr: DuckDbManager | undefined;
+        await expect(DuckDbManager.withIsolated(async (mgr) => {
+            errorMgr = mgr;
+            throw new Error('Callback failure');
+        })).rejects.toThrow('Callback failure');
+        expect(errorMgr).toBeDefined();
+        await expect(errorMgr!.runQuery('SELECT 1')).rejects.toThrow();
+    });
+
     it('exports a table to Parquet and manages Views', async () => {
         const mgr = await DuckDbManager.getInstance(mockEnv);
         await mgr.runQuery('CREATE TABLE sales (id INT, amount INT)');

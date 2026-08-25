@@ -54,9 +54,9 @@ export async function cleanNotebookSession(env: IVuraEnvironment): Promise<void>
     // 1. Dispose DuckDB instance
     DuckDbManager.disposeNotebook(notebookId);
 
-    // 2. Dispose warm sidecar processes
+    // 2. Dispose warm sidecar processes and wait for exit
     const { sidecarPool } = require('./services/sidecarPool');
-    sidecarPool.disposeNotebook(notebookId);
+    await sidecarPool.disposeNotebook(notebookId);
 
     // 3. Clear ContextManager mappings
     const { ContextManager } = require('./services/contextManager');
