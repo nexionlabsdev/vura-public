@@ -89,7 +89,7 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
             }
 
 
-            // File Ingestion
+            // File Ingestion & File Export
             if (cell.document.languageId === 'vura-terminal') {
                 const ingestItem = new vscode.NotebookCellStatusBarItem(
                     '$(file-directory) Ingest Local File',
@@ -101,6 +101,17 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                     arguments: [cell]
                 };
                 items.push(ingestItem);
+
+                const exportItem = new vscode.NotebookCellStatusBarItem(
+                    '$(export) Export File',
+                    vscode.NotebookCellStatusBarAlignment.Left
+                );
+                exportItem.command = {
+                    title: 'Export File',
+                    command: 'vura-notebook.exportFileCommand',
+                    arguments: [cell]
+                };
+                items.push(exportItem);
             }
             // Python Path Item
             if (cell.document.languageId === 'python') {
@@ -677,6 +688,58 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             magicCommand += ` "${sheetName}"`;
         }
         magicCommand += ` -> ${tableName}\n`;
+
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(cell.document.uri, new vscode.Position(0, 0), magicCommand);
+        await vscode.workspace.applyEdit(edit);
+    }));
+
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.exportFileCommand', async (cell: vscode.NotebookCell) => {
+        const notebook = cell.notebook;
+        const knownTables = new Set<string>();
+        for (let i = 0; i < notebook.cellCount; i++) {
+            const c = notebook.cellAt(i);
+            const tbl = c.metadata?.tableName || `cell_${c.index}`;
+            knownTables.add(tbl);
+        }
+
+        const pickItems: vscode.QuickPickItem[] = Array.from(knownTables).map(t => ({ label: t, description: 'Table from notebook cell' }));
+        pickItems.unshift({ label: '$(edit) Enter custom table name...', description: 'Specify a table name manually' });
+
+        const selectedSource = await vscode.window.showQuickPick(pickItems, {
+            placeHolder: 'Select Source Table to Export'
+        });
+
+        if (!selectedSource) return;
+
+        let sourceTable = selectedSource.label;
+        if (selectedSource.label.includes('Enter custom table name')) {
+            const customName = await vscode.window.showInputBox({
+                prompt: 'Enter source table name'
+            });
+            if (!customName) return;
+            sourceTable = customName.trim();
+        }
+
+        const formatOptions = ['xlsx', 'csv', 'json', 'parquet'];
+        const selectedFormat = await vscode.window.showQuickPick(formatOptions, {
+            placeHolder: 'Select Export Format'
+        });
+
+        if (!selectedFormat) return;
+
+        const defaultTargetName = `${sourceTable.replace(/[^a-zA-Z0-9_]/g, '_')}_export`;
+        const outputTable = await vscode.window.showInputBox({
+            prompt: 'Enter target output table name',
+            value: defaultTargetName
+        });
+
+        if (!outputTable) return;
+
+        const srcParam = sourceTable.includes(' ') ? `"${sourceTable}"` : sourceTable;
+        const outParam = outputTable.includes(' ') ? `"${outputTable}"` : outputTable;
+
+        const magicCommand = `!export-file ${srcParam} ${selectedFormat} -> ${outParam}\n`;
 
         const edit = new vscode.WorkspaceEdit();
         edit.insert(cell.document.uri, new vscode.Position(0, 0), magicCommand);

@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import { ProviderRegistry } from '@vura-data-os/core-sdk';
 import { IVuraEnvironment, ICellLogger, FlownbCell } from '../interfaces';
 import { handleFileIngestion } from './ingestionHandler';
+import { handleFileExport } from './fileExportHandler';
 import { ensurePythonVenv } from '../utils/pythonVenv';
 
 export async function handleTerminal(
@@ -36,6 +37,21 @@ export async function handleTerminal(
                     continue;
                 } else {
                     throw new Error('Invalid !ingest-file command syntax');
+                }
+            }
+
+            if (commandRoot === '!export-file') {
+                const match = trimmed.match(
+                    /^!export-file\s+(?:"([^"]+)"|([^\s]+))\s+(xlsx|csv|json|parquet)\s+->\s+(?:"([^"]+)"|([^\s]+))$/i
+                );
+                if (match) {
+                    const sourceTable = match[1] || match[2];
+                    const format = match[3];
+                    const outputTable = match[4] || match[5];
+                    await handleFileExport(sourceTable, format, outputTable, env, logger);
+                    continue;
+                } else {
+                    throw new Error('Invalid !export-file command syntax');
                 }
             }
 

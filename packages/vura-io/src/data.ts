@@ -411,10 +411,11 @@ export class DataManager {
 
         const isNested = (val: any): boolean => {
             if (!val || typeof val !== 'object') return false;
+            if (ArrayBuffer.isView(val) || val instanceof Uint8Array || Buffer.isBuffer(val) || val?.constructor?.name === 'Buffer' || val?.constructor?.name === 'Uint8Array') return false;
             if (Array.isArray(val)) {
-                return val.some(item => item && typeof item === 'object');
+                return val.some(item => isNested(item));
             }
-            return Object.values(val).some(v => v && typeof v === 'object');
+            return Object.values(val).some(v => isNested(v));
         };
 
         if (isNested(obj)) {
