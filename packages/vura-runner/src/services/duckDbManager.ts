@@ -258,16 +258,18 @@ export class DuckDbManager {
         try { await this.runQuery(`DROP VIEW IF EXISTS "${tableName}"`); } catch { }
         try { await this.runQuery(`DROP TABLE IF EXISTS "${tableName}"`); } catch { }
 
-        const colDefs = Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ');
+        const colDefs = Object.entries(schemaMap).length > 0
+            ? Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ')
+            : '"_vura_dummy" VARCHAR';
         await this.runQuery(`CREATE TABLE "${tableName}" (${colDefs})`);
 
         const appender = await this.connection!.createAppender(tableName, 'main');
-        const keys = Object.keys(schemaMap);
+        const keys = Object.keys(schemaMap).length > 0 ? Object.keys(schemaMap) : ['_vura_dummy'];
 
         for (const r of rawRecords) {
             for (const k of keys) {
-                const val = r ? r[k] : null;
-                const type = schemaMap[k];
+                const val = (r && k in r) ? r[k] : null;
+                const type = schemaMap[k] || 'VARCHAR';
                 if (val === null || val === undefined) {
                     appender.appendNull();
                 } else if (type === 'BIGINT') {
@@ -286,6 +288,44 @@ export class DuckDbManager {
         }
         appender.flushSync();
         appender.closeSync();
+    }
+
+    /** Registers a visual output export table (cell_{cellIndex}_output_pdf / png) in DuckDB and exports to parquet. */
+    public async registerVisualOutputTable(
+        cellIndex: number | string,
+        exportType: 'pdf' | 'png',
+        filePath: string,
+        storagePath?: string
+    ): Promise<string> {
+        let cellIdentifier: string;
+        if (typeof cellIndex === 'number') {
+            cellIdentifier = `cell_${cellIndex + 1}`;
+        } else if (cellIndex.startsWith('cell_')) {
+            cellIdentifier = cellIndex;
+        } else {
+            cellIdentifier = `cell_${cellIndex}`;
+        }
+
+        const tableName = `${cellIdentifier}_output_${exportType}`;
+        const safePath = filePath.replace(/\\/g, '/');
+
+        try { await this.runQuery(`DROP VIEW IF EXISTS "${tableName}"`); } catch {}
+        try { await this.runQuery(`DROP TABLE IF EXISTS "${tableName}"`); } catch {}
+
+        await this.runQuery(`CREATE TABLE "${tableName}" (path VARCHAR, cell_index VARCHAR, export_type VARCHAR, created_at VARCHAR)`);
+        await this.runQuery(
+            `INSERT INTO "${tableName}" VALUES (?, ?, ?, ?)`,
+            [safePath, cellIdentifier, exportType, new Date().toISOString()]
+        );
+
+        if (storagePath) {
+            try {
+                await fs.mkdir(storagePath, { recursive: true });
+                await this.exportTableToParquet(tableName, storagePath);
+            } catch {}
+        }
+
+        return tableName;
     }
 
     /** Export a DuckDB table to a parquet file so Python and Node.js sidecars can read it. */
