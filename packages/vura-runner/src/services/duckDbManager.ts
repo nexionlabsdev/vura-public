@@ -71,6 +71,7 @@ export class DuckDbManager {
     private db?: DuckDBInstance;
     private connection?: DuckDBConnection;
     private dbPath!: string;
+    private updateViewChain: Promise<void> = Promise.resolve();
 
     private constructor() { }
 
@@ -170,13 +171,23 @@ export class DuckDbManager {
                 existing.filter((r: any) => r.table_type === 'BASE TABLE').map((r: any) => r.table_name)
             );
 
-            const files = await fs.readdir(env.storagePath);
-            for (const file of files) {
-                if ((file.endsWith('.parquet') || file.endsWith('.arrow')) && !file.startsWith('__vura_meta_')) {
-                    const tableName = file.replace(/\.(parquet|arrow)$/, '');
+            const items = await fs.readdir(env.storagePath);
+            for (const item of items) {
+                if (item.startsWith('__vura_meta_')) continue;
+                const fullPath = path.join(env.storagePath, item);
+                const stat = await fs.stat(fullPath);
+                if (stat.isDirectory()) {
+                    const manifestPath = path.join(fullPath, 'manifest.json');
+                    try {
+                        await fs.access(manifestPath);
+                        if (!baseTables.has(item)) {
+                            await this.updateView(item, manifestPath);
+                        }
+                    } catch {}
+                } else if (item.endsWith('.parquet') || item.endsWith('.arrow')) {
+                    const tableName = item.replace(/\.(parquet|arrow)$/, '');
                     if (!baseTables.has(tableName)) {
-                        const filePath = path.join(env.storagePath, file);
-                        await this.updateView(tableName, filePath);
+                        await this.updateView(tableName, fullPath);
                     }
                 }
             }
@@ -300,12 +311,30 @@ export class DuckDbManager {
     }
 
     public async updateView(viewName: string, filePath: string): Promise<void> {
+        const promise = this.updateViewChain.then(() => this.doUpdateView(viewName, filePath));
+        this.updateViewChain = promise.catch(() => {});
+        return promise;
+    }
+
+    private async doUpdateView(viewName: string, filePath: string): Promise<void> {
         const safePath = filePath.replace(/\\/g, '/');
-        const readQuery = filePath.endsWith('.arrow')
-            ? `read_ipc('${safePath}')`
-            : `read_parquet('${safePath}')`;
+        try { await this.runQuery(`DROP VIEW IF EXISTS "${viewName}";`); } catch {}
         try { await this.runQuery(`DROP TABLE IF EXISTS "${viewName}";`); } catch {}
-        const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM ${readQuery};`;
+
+        if (filePath.endsWith('manifest.json') || filePath.endsWith('/manifest.json')) {
+            const dirPath = path.dirname(filePath).replace(/\\/g, '/');
+            const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM read_parquet('${dirPath}/*.parquet', union_by_name=true);`;
+            await this.runQuery(sql);
+            return;
+        }
+
+        if (filePath.endsWith('.arrow')) {
+            const buf = await fs.readFile(filePath);
+            await this.saveTableArrowIPC(viewName, buf);
+            return;
+        }
+
+        const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM read_parquet('${safePath}');`;
         await this.runQuery(sql);
     }
 

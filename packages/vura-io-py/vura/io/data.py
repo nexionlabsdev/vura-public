@@ -1,6 +1,8 @@
 import os
 import json
 import sys
+import shutil
+import tempfile
 from .shredder import shred_json, unshred_json
 
 try:
@@ -18,6 +20,7 @@ class DataManager:
         self.storage_path = storage_path or os.environ.get("VURA_STORAGE_PATH", os.getcwd())
         self._manifests = {}
         self._duckdb_conn = None
+        self._buffer_map = {}
 
     def _get_duckdb_conn(self):
         if self._duckdb_conn is None:
@@ -42,8 +45,8 @@ class DataManager:
         return os.environ.get("VURA_STORAGE_PATH", self.storage_path)
 
     @property
-    def threshold_bytes(self):
-        env_val = os.environ.get("VURA_ARROW_THRESHOLD_BYTES")
+    def partition_threshold_rows(self):
+        env_val = os.environ.get("VURA_PARTITION_THRESHOLD_ROWS")
         if env_val:
             try:
                 val = int(env_val)
@@ -51,13 +54,17 @@ class DataManager:
                     return val
             except ValueError:
                 pass
-        return 5 * 1024 * 1024  # Default 5 MB
+        return 50000
 
     def _get_table_path(self, table_name, ext):
         return os.path.join(self.current_storage_path, f"{table_name}.{ext}")
 
     def _find_existing_table_path(self, table_name):
         base_name = table_name.replace('.parquet', '').replace('.arrow', '')
+        manifest_path = os.path.join(self.current_storage_path, base_name, 'manifest.json')
+        if os.path.exists(manifest_path):
+            return manifest_path, 'partitioned'
+
         arrow_path = self._get_table_path(base_name, 'arrow')
         parquet_path = self._get_table_path(base_name, 'parquet')
 
@@ -70,73 +77,174 @@ class DataManager:
             lower_base = base_name.lower()
             for f in os.listdir(self.current_storage_path):
                 f_lower = f.lower()
+                full_item = os.path.join(self.current_storage_path, f)
+                if f_lower == lower_base and os.path.isdir(full_item) and os.path.exists(os.path.join(full_item, 'manifest.json')):
+                    return os.path.join(full_item, 'manifest.json'), 'partitioned'
                 if f_lower == f"{lower_base}.arrow":
-                    return os.path.join(self.current_storage_path, f), 'arrow'
+                    return full_item, 'arrow'
                 if f_lower == f"{lower_base}.parquet":
-                    return os.path.join(self.current_storage_path, f), 'parquet'
+                    return full_item, 'parquet'
         return None, None
 
-    def _emit_mapping(self, variable_name, file_path):
-        print(json.dumps({"type": "vura_io_mapping", "variable": variable_name, "path": file_path}), file=sys.stderr)
+    def _emit_mapping(self, variable_name, file_path, partitioned=False):
+        payload = {"type": "vura_io_mapping", "variable": variable_name, "path": file_path}
+        if partitioned:
+            payload["partitioned"] = True
+        print(json.dumps(payload), file=sys.stderr)
 
-    def _write_table_data(self, table_name, records):
+    def _save_manifest_atomically(self, table_name, manifest):
+        dir_path = os.path.join(self.current_storage_path, table_name)
+        os.makedirs(dir_path, exist_ok=True)
+        manifest_path = os.path.join(dir_path, 'manifest.json')
+        fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='manifest.json.tmp.')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, indent=2)
+        os.replace(tmp_path, manifest_path)
+        return manifest_path
+
+    def _extract_schema_map(self, pyarrow_table):
+        schema_map = {}
+        for field in pyarrow_table.schema:
+            t_str = str(field.type)
+            if 'int' in t_str:
+                schema_map[field.name] = 'BIGINT'
+            elif 'double' in t_str or 'float' in t_str:
+                schema_map[field.name] = 'DOUBLE'
+            elif 'bool' in t_str:
+                schema_map[field.name] = 'BOOLEAN'
+            elif 'timestamp' in t_str or 'date' in t_str:
+                schema_map[field.name] = 'TIMESTAMP'
+            else:
+                schema_map[field.name] = 'VARCHAR'
+        if not schema_map:
+            schema_map['_vura_value'] = 'VARCHAR'
+        return schema_map
+
+    def _to_pyarrow_table(self, records):
         curr_pd = self._get_pd()
         import pyarrow as pa
-        import pyarrow.parquet as pq
-
         if isinstance(records, pa.Table):
-            table = records
+            return records
         elif isinstance(records, curr_pd.DataFrame):
-            table = pa.Table.from_pandas(records)
+            return pa.Table.from_pandas(records)
         elif not records:
             df = curr_pd.DataFrame(columns=["_vura_id", "_vura_parent_id", "_vura_index", "_vura_value"])
-            table = pa.Table.from_pandas(df)
+            return pa.Table.from_pandas(df)
         elif isinstance(records, list):
             try:
-                table = pa.Table.from_pylist(records)
+                return pa.Table.from_pylist(records)
             except Exception:
                 df = curr_pd.DataFrame(records)
-                table = pa.Table.from_pandas(df)
+                return pa.Table.from_pandas(df)
         else:
             df = curr_pd.DataFrame([records])
-            table = pa.Table.from_pandas(df)
+            return pa.Table.from_pandas(df)
 
-        parquet_path = self._get_table_path(table_name, 'parquet')
-        pq.write_table(table, parquet_path)
-        return parquet_path
+    def _write_parquet_part(self, table_name, part_name, table):
+        import pyarrow.parquet as pq
+        dir_path = os.path.join(self.current_storage_path, table_name)
+        os.makedirs(dir_path, exist_ok=True)
+        part_path = os.path.join(dir_path, part_name)
+        pq.write_table(table, part_path)
+        return part_path
+
+    def _write_table_data(self, table_name, records):
+        table = self._to_pyarrow_table(records)
+
+        if len(table) < self.partition_threshold_rows:
+            arrow_path = self._get_table_path(table_name, 'arrow')
+            os.makedirs(os.path.dirname(arrow_path), exist_ok=True)
+            import pyarrow.feather as feather
+            feather.write_feather(table, arrow_path, compression="uncompressed")
+
+            parquet_path = self._get_table_path(table_name, 'parquet')
+            if os.path.exists(parquet_path):
+                try:
+                    os.remove(parquet_path)
+                except OSError:
+                    pass
+            part_dir = os.path.join(self.current_storage_path, table_name)
+            if os.path.exists(part_dir) and os.path.isdir(part_dir):
+                try:
+                    shutil.rmtree(part_dir)
+                except OSError:
+                    pass
+
+            return arrow_path
+
+        part0 = 'part-0000.parquet'
+        self._write_parquet_part(table_name, part0, table)
+        schema_map = self._extract_schema_map(table)
+        manifest = {
+            "version": 1,
+            "tableName": table_name,
+            "rowCount": len(table),
+            "compacted": False,
+            "parts": [{"file": part0, "rowCount": len(table)}],
+            "schema": schema_map
+        }
+        manifest_path = self._save_manifest_atomically(table_name, manifest)
+
+        legacy_arrow = self._get_table_path(table_name, 'arrow')
+        if os.path.exists(legacy_arrow):
+            try:
+                os.remove(legacy_arrow)
+            except OSError:
+                pass
+        legacy_parquet = self._get_table_path(table_name, 'parquet')
+        if os.path.exists(legacy_parquet):
+            try:
+                os.remove(legacy_parquet)
+            except OSError:
+                pass
+
+        return manifest_path
 
     def _read_table_data(self, table_name):
         file_path, fmt = self._find_existing_table_path(table_name)
         if not file_path:
             return []
         curr_pd = self._get_pd()
+
+        if fmt == 'partitioned':
+            dir_path = os.path.dirname(file_path)
+            part_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.parquet')]
+            import pyarrow.dataset as ds
+            dataset = ds.dataset(part_files, format="parquet")
+            df = dataset.to_table().to_pandas()
+            return df.to_dict(orient="records")
+
         if fmt == 'arrow':
             import pyarrow.feather as feather
             df = feather.read_feather(file_path)
-        else:
-            df = curr_pd.read_parquet(file_path, engine="pyarrow")
+            return df.to_dict(orient="records")
+
+        df = curr_pd.read_parquet(file_path, engine="pyarrow")
         return df.to_dict(orient="records")
 
     def pack(self, name, obj):
+        self._buffer_map.pop(name, None)
         tables, manifest, table_names = shred_json(name, obj)
         self._manifests[name] = manifest
 
         for table_name, records in tables.items():
+            self._buffer_map.pop(table_name, None)
             file_path = self._write_table_data(table_name, records)
-            self._emit_mapping(table_name, file_path)
+            is_part = file_path.endswith('manifest.json')
+            self._emit_mapping(table_name, file_path, is_part)
             if table_name.startswith(f"{name}_"):
                 short_key = table_name[len(name) + 1:]
                 if short_key:
-                    self._emit_mapping(short_key, file_path)
+                    self._emit_mapping(short_key, file_path, is_part)
 
         meta_table_name = f"__vura_meta_{name}"
         meta_records = [{"manifest": json.dumps(manifest)}]
         self._write_table_data(meta_table_name, meta_records)
 
-        root_path, _ = self._find_existing_table_path(name)
+        root_path, root_fmt = self._find_existing_table_path(name)
         if not root_path:
             root_path = self._get_table_path(name, 'parquet')
-        self._emit_mapping(name, root_path)
+        self._emit_mapping(name, root_path, root_fmt == 'partitioned')
         return table_names
 
     def unpack(self, name):
@@ -156,12 +264,13 @@ class DataManager:
         return unshred_json(manifest, tables)
 
     def put(self, name, obj):
+        self._buffer_map.pop(name, None)
         curr_pd = self._get_pd()
         import pyarrow as pa
 
         if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
             file_path = self._write_table_data(name, obj)
-            self._emit_mapping(name, file_path)
+            self._emit_mapping(name, file_path, file_path.endswith('manifest.json'))
             return [name]
 
         is_nested = False
@@ -175,10 +284,11 @@ class DataManager:
 
         records = obj if isinstance(obj, list) else [obj]
         file_path = self._write_table_data(name, records)
-        self._emit_mapping(name, file_path)
+        self._emit_mapping(name, file_path, file_path.endswith('manifest.json'))
         return [name]
 
     def get(self, name):
+        self.flush(name)
         meta_table_name = f"__vura_meta_{name}"
         meta_path, _ = self._find_existing_table_path(meta_table_name)
         if meta_path or name in self._manifests:
@@ -187,6 +297,14 @@ class DataManager:
         file_path, fmt = self._find_existing_table_path(name)
         if not file_path:
             raise FileNotFoundError(f"Table '{name}' not found.")
+
+        if fmt == 'partitioned':
+            dir_path = os.path.dirname(file_path)
+            part_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.parquet')]
+            import pyarrow.dataset as ds
+            dataset = ds.dataset(part_files, format="parquet")
+            return dataset.to_table().to_pandas()
+
         curr_pd = self._get_pd()
         if fmt == 'arrow':
             import pyarrow.feather as feather
@@ -194,16 +312,59 @@ class DataManager:
         return curr_pd.read_parquet(file_path, engine="pyarrow")
 
     def count(self, name):
+        self.flush(name)
         file_path, fmt = self._find_existing_table_path(name)
         if not file_path:
             return 0
+        if fmt == 'partitioned':
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                    return manifest.get("rowCount", 0)
+            except Exception:
+                return 0
+        if fmt == 'arrow':
+            import pyarrow.feather as feather
+            return len(feather.read_feather(file_path))
         import pyarrow.parquet as pq
         return pq.ParquetFile(file_path).metadata.num_rows
 
     def stream(self, name, batch_size=50000, format='dict'):
+        self.flush(name)
         file_path, fmt = self._find_existing_table_path(name)
         if not file_path:
             return
+
+        if fmt == 'partitioned':
+            dir_path = os.path.dirname(file_path)
+            part_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.parquet')]
+            import pyarrow.dataset as ds
+            dataset = ds.dataset(part_files, format="parquet")
+            for batch in dataset.to_batches(batch_size=batch_size):
+                if format == 'arrow':
+                    yield batch
+                elif format == 'dataframe':
+                    curr_pd = self._get_pd()
+                    yield curr_pd.DataFrame(batch.to_pydict())
+                else:
+                    yield batch.to_pylist()
+            return
+
+        if fmt == 'arrow':
+            import pyarrow.feather as feather
+            df = feather.read_feather(file_path)
+            import pyarrow as pa
+            table = pa.Table.from_pandas(df)
+            for batch in table.to_batches(max_chunksize=batch_size):
+                if format == 'arrow':
+                    yield batch
+                elif format == 'dataframe':
+                    curr_pd = self._get_pd()
+                    yield curr_pd.DataFrame(batch.to_pydict())
+                else:
+                    yield batch.to_pylist()
+            return
+
         import pyarrow.parquet as pq
         pf = pq.ParquetFile(file_path)
         for batch in pf.iter_batches(batch_size=batch_size):
@@ -216,31 +377,121 @@ class DataManager:
                 yield batch.to_pylist()
 
     def append(self, name, obj):
-        file_path, _ = self._find_existing_table_path(name)
-        if not file_path:
-            return self.put(name, obj)
         import pyarrow as pa
-        import pyarrow.parquet as pq
-        curr_pd = self._get_pd()
+        table = self._to_pyarrow_table(obj)
+        if len(table) == 0:
+            return [name]
 
-        if isinstance(obj, pa.Table):
-            new_table = obj
-        elif isinstance(obj, curr_pd.DataFrame):
-            new_table = pa.Table.from_pandas(obj)
-        elif isinstance(obj, list):
-            new_table = pa.Table.from_pylist(obj)
+        buf = self._buffer_map.get(name)
+        if buf is None:
+            buf = table
         else:
-            new_table = pa.Table.from_pandas(curr_pd.DataFrame([obj]))
+            buf = pa.concat_tables([buf, table], promote_options="permissive")
+        self._buffer_map[name] = buf
 
-        existing_table = pq.read_table(file_path)
-        combined_table = pa.concat_tables([existing_table, new_table])
-        parquet_path = self._get_table_path(name, 'parquet')
-        pq.write_table(combined_table, parquet_path)
-        self._emit_mapping(name, parquet_path)
+        if len(buf) >= self.partition_threshold_rows:
+            self.flush(name)
         return [name]
 
+    def flush(self, name):
+        buffered = self._buffer_map.pop(name, None)
+        if buffered is None or len(buffered) == 0:
+            return [name]
+
+        file_path, fmt = self._find_existing_table_path(name)
+
+        if not file_path:
+            if len(buffered) < self.partition_threshold_rows:
+                written_path = self._write_table_data(name, buffered)
+                self._emit_mapping(name, written_path)
+                return [name]
+            else:
+                part0 = 'part-0000.parquet'
+                self._write_parquet_part(name, part0, buffered)
+                schema_map = self._extract_schema_map(buffered)
+                manifest = {
+                    "version": 1,
+                    "tableName": name,
+                    "rowCount": len(buffered),
+                    "compacted": False,
+                    "parts": [{"file": part0, "rowCount": len(buffered)}],
+                    "schema": schema_map
+                }
+                manifest_path = self._save_manifest_atomically(name, manifest)
+                self._emit_mapping(name, manifest_path, True)
+                return [name]
+
+        if fmt == 'partitioned':
+            with open(file_path, 'r', encoding='utf-8') as f:
+                manifest = json.load(f)
+            next_part_index = len(manifest.get("parts", []))
+            part_name = f"part-{next_part_index:04d}.parquet"
+            self._write_parquet_part(name, part_name, buffered)
+
+            manifest["parts"].append({"file": part_name, "rowCount": len(buffered)})
+            manifest["rowCount"] += len(buffered)
+            schema_map = self._extract_schema_map(buffered)
+            manifest.setdefault("schema", {}).update(schema_map)
+
+            manifest_path = self._save_manifest_atomically(name, manifest)
+            self._emit_mapping(name, manifest_path, True)
+            return [name]
+
+        # Single file case (.arrow or .parquet)
+        import pyarrow as pa
+        curr_pd = self._get_pd()
+        if fmt == 'arrow':
+            import pyarrow.feather as feather
+            existing_df = feather.read_feather(file_path)
+            existing_table = pa.Table.from_pandas(existing_df)
+        else:
+            import pyarrow.parquet as pq
+            existing_table = pq.read_table(file_path)
+
+        combined_table = pa.concat_tables([existing_table, buffered], promote_options="permissive")
+        total_rows = len(combined_table)
+
+        if total_rows < self.partition_threshold_rows:
+            written_path = self._write_table_data(name, combined_table)
+            self._emit_mapping(name, written_path)
+            return [name]
+
+        # Migrate single file to partitioned table
+        part0 = 'part-0000.parquet'
+        part1 = 'part-0001.parquet'
+        self._write_parquet_part(name, part0, existing_table)
+        self._write_parquet_part(name, part1, buffered)
+
+        schema_map = self._extract_schema_map(combined_table)
+        manifest = {
+            "version": 1,
+            "tableName": name,
+            "rowCount": total_rows,
+            "compacted": False,
+            "parts": [
+                {"file": part0, "rowCount": len(existing_table)},
+                {"file": part1, "rowCount": len(buffered)}
+            ],
+            "schema": schema_map
+        }
+        manifest_path = self._save_manifest_atomically(name, manifest)
+
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+
+        self._emit_mapping(name, manifest_path, True)
+        return [name]
+
+    def flush_all(self):
+        for name in list(self._buffer_map.keys()):
+            self.flush(name)
+
     def update(self, name, obj, on):
-        file_path, _ = self._find_existing_table_path(name)
+        self.flush(name)
+        file_path, fmt = self._find_existing_table_path(name)
         if not file_path:
             raise FileNotFoundError(f"Table '{name}' does not exist to update.")
 
@@ -248,44 +499,37 @@ class DataManager:
         if not keys:
             raise ValueError("Update requires at least one key in 'on'.")
 
-        import duckdb
-        conn = self._get_duckdb_conn()
+        existing_records = self._read_table_data(name)
         curr_pd = self._get_pd()
-        import pyarrow as pa
+        target_df = curr_pd.DataFrame(existing_records)
 
-        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
-            stage_df = obj.to_pandas() if isinstance(obj, pa.Table) else obj
+        if isinstance(obj, curr_pd.DataFrame):
+            stage_df = obj
+        elif hasattr(obj, 'to_pandas'):
+            stage_df = obj.to_pandas()
         elif isinstance(obj, list):
             stage_df = curr_pd.DataFrame(obj)
         else:
             stage_df = curr_pd.DataFrame([obj])
 
-        safe_file_path = file_path.replace("\\", "/")
-        conn.register("stage_df", stage_df)
-        conn.execute(f"CREATE OR REPLACE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+        target_df.set_index(keys, inplace=False, drop=False)
+        stage_df.set_index(keys, inplace=False, drop=False)
 
-        stage_cols = list(stage_df.columns)
-        non_key_cols = [c for c in stage_cols if c not in keys]
+        updated_df = target_df.copy()
+        for idx, row in stage_df.iterrows():
+            cond = True
+            for k in keys:
+                cond = cond & (updated_df[k] == row[k])
+            updated_df.loc[cond, stage_df.columns] = row
 
-        if non_key_cols:
-            set_clause = ", ".join([f'"{c}" = s."{c}"' for c in non_key_cols])
-            join_cond = " AND ".join([f't."{k}" = s."{k}"' for k in keys])
-            conn.execute(f"""
-                UPDATE target_tbl AS t
-                SET {set_clause}
-                FROM stage_df AS s
-                WHERE {join_cond}
-            """)
-
-        parquet_path = self._get_table_path(name, 'parquet')
-        safe_target = parquet_path.replace("\\", "/")
-        conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
-
-        self._emit_mapping(name, parquet_path)
+        updated_records = updated_df.to_dict(orient="records")
+        file_path = self._write_table_data(name, updated_records)
+        self._emit_mapping(name, file_path, file_path.endswith('manifest.json'))
         return [name]
 
     def upsert(self, name, obj, on):
-        file_path, _ = self._find_existing_table_path(name)
+        self.flush(name)
+        file_path, fmt = self._find_existing_table_path(name)
         if not file_path:
             return self.put(name, obj)
 
@@ -293,48 +537,35 @@ class DataManager:
         if not keys:
             raise ValueError("Upsert requires at least one key in 'on'.")
 
-        import duckdb
-        conn = self._get_duckdb_conn()
+        existing_records = self._read_table_data(name)
         curr_pd = self._get_pd()
-        import pyarrow as pa
+        target_df = curr_pd.DataFrame(existing_records)
 
-        if isinstance(obj, (curr_pd.DataFrame, pa.Table)):
-            stage_df = obj.to_pandas() if isinstance(obj, pa.Table) else obj
+        if isinstance(obj, curr_pd.DataFrame):
+            stage_df = obj
+        elif hasattr(obj, 'to_pandas'):
+            stage_df = obj.to_pandas()
         elif isinstance(obj, list):
             stage_df = curr_pd.DataFrame(obj)
         else:
             stage_df = curr_pd.DataFrame([obj])
 
-        safe_file_path = file_path.replace("\\", "/")
-        conn.register("stage_df", stage_df)
-        conn.execute(f"CREATE OR REPLACE TEMP TABLE target_tbl AS SELECT * FROM read_parquet('{safe_file_path}')")
+        for idx, row in stage_df.iterrows():
+            cond = True
+            for k in keys:
+                cond = cond & (target_df[k] == row[k])
+            if cond.any():
+                target_df.loc[cond, stage_df.columns] = row
+            else:
+                target_df = curr_pd.concat([target_df, curr_pd.DataFrame([row])], ignore_index=True)
 
-        stage_cols = list(stage_df.columns)
-        non_key_cols = [c for c in stage_cols if c not in keys]
-
-        join_cond = " AND ".join([f't."{k}" = s."{k}"' for k in keys])
-        update_set_clause = ", ".join([f'"{c}" = s."{c}"' for c in non_key_cols])
-        insert_cols_clause = ", ".join([f'"{c}"' for c in stage_cols])
-        insert_vals_clause = ", ".join([f's."{c}"' for c in stage_cols])
-
-        update_part = f"WHEN MATCHED THEN UPDATE SET {update_set_clause}" if non_key_cols else ""
-
-        conn.execute(f"""
-            MERGE INTO target_tbl AS t
-            USING stage_df AS s
-            ON {join_cond}
-            {update_part}
-            WHEN NOT MATCHED THEN INSERT ({insert_cols_clause}) VALUES ({insert_vals_clause})
-        """)
-
-        parquet_path = self._get_table_path(name, 'parquet')
-        safe_target = parquet_path.replace("\\", "/")
-        conn.execute(f"COPY target_tbl TO '{safe_target}' (FORMAT PARQUET)")
-
-        self._emit_mapping(name, parquet_path)
+        updated_records = target_df.to_dict(orient="records")
+        file_path = self._write_table_data(name, updated_records)
+        self._emit_mapping(name, file_path, file_path.endswith('manifest.json'))
         return [name]
 
     def tables(self, name=None):
+        self.flush_all()
         if name:
             meta_table_name = f"__vura_meta_{name}"
             meta_records = self._read_table_data(meta_table_name)
@@ -345,11 +576,15 @@ class DataManager:
 
         if not os.path.exists(self.current_storage_path):
             return []
-        return [
-            os.path.splitext(f)[0]
-            for f in os.listdir(self.current_storage_path)
-            if (f.endswith(".parquet") or f.endswith(".arrow")) and not f.startswith("__vura_meta_")
-        ]
+        res = []
+        for f in os.listdir(self.current_storage_path):
+            if f.startswith("__vura_meta_"):
+                continue
+            full = os.path.join(self.current_storage_path, f)
+            if os.path.isdir(full) and os.path.exists(os.path.join(full, 'manifest.json')):
+                res.append(f)
+            elif f.endswith(".parquet") or f.endswith(".arrow"):
+                res.append(os.path.splitext(f)[0])
+        return res
 
 data = DataManager()
-
