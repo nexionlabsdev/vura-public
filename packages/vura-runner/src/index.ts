@@ -15,3 +15,4 @@ export * from './utils/flownbLoader';
 export * from './handlers/pythonHandler';
 export * from './handlers/nodeHandler';
 export * from './handlers/terminalHandler';
+export * from './handlers/fileExportHandler';
