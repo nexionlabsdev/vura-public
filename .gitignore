@@ -27,7 +27,11 @@ yarn-error.log*
 # MacOS system files
 .DS_Store
 
-# Python venv
+# Python build & runtime artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
 .venv/
 
 # vura-runner local runtime state
