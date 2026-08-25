@@ -704,6 +704,7 @@ class DataManager {
 class StateManager {
     constructor() {
         this.store = new Map();
+        this._currentCtx = {};
     }
 
     set(key, value) {
@@ -714,11 +715,19 @@ class StateManager {
         return this.store.has(key) ? this.store.get(key) : defaultValue;
     }
 
+    setRequestCtx(ctx) {
+        this._currentCtx = ctx || {};
+    }
+
     get context() {
+        const depthLimit = this._currentCtx.depthLimit !== undefined
+            ? this._currentCtx.depthLimit
+            : parseInt(process.env.VURA_DEPTH_LIMIT || '5', 10);
         return {
             storagePath: process.env.VURA_STORAGE_PATH || '',
             notebookId: process.env.VURA_NOTEBOOK_ID || 'default',
-            depthLimit: parseInt(process.env.VURA_DEPTH_LIMIT || '5', 10),
+            depthLimit: depthLimit,
+            token: this._currentCtx.token || '',
             env: process.env
         };
     }
@@ -765,70 +774,94 @@ function transformImports(code) {
         .replace(/^(\s*)import\s+(['"][^'"]+['"])\s*;?/gm, '$1require($2);');
 }
 
-async function serveForever(data, state, metrics) {
+function serveForever(data, state, metrics) {
     const rl = readline.createInterface({ input: process.stdin, terminal: false });
+    let isExecuting = false;
+    const realStdoutWrite = process.stdout.write.bind(process.stdout);
 
-    for await (const line of rl) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+    return new Promise((resolve) => {
+        rl.on('line', async (line) => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
 
-        let request;
-        try { request = JSON.parse(trimmed); } catch { continue; }
+            let request;
+            try { request = JSON.parse(trimmed); } catch { return; }
 
-        const { id, code, filename, env: envOverrides } = request;
-        for (const [key, value] of Object.entries(envOverrides || {})) {
-            process.env[key] = value == null ? '' : String(value);
-        }
+            const { id, code, filename, ctx: reqCtx } = request;
 
-        let stdoutBuf = '';
-        let stderrBuf = '';
-        const origStdoutWrite = process.stdout.write.bind(process.stdout);
-        const origStderrWrite = process.stderr.write.bind(process.stderr);
-
-        process.stdout.write = (chunk) => { stdoutBuf += chunk.toString(); return true; };
-        process.stderr.write = (chunk) => { stderrBuf += chunk.toString(); return true; };
-
-        let status = 'ok';
-        let errorMessage;
-        const cellFilename = filename || path.join(process.cwd(), 'cell.js');
-
-        try {
-            let processedCode = transformImports(code);
-            const wrapped = `(async () => {\n${processedCode}\n})()`;
-            const script = new vm.Script(wrapped, { filename: cellFilename });
-            const vuraObj = { io: { data, state, metrics }, data, state, metrics };
-            const sandbox = {
-                require, module, exports,
-                __dirname: path.dirname(cellFilename),
-                __filename: cellFilename,
-                console, process, Buffer,
-                setTimeout, clearTimeout, setInterval, clearInterval, setImmediate,
-                URL, URLSearchParams, TextEncoder, TextDecoder,
-                data, state, metrics,
-                vura: vuraObj
-            };
-            const context = vm.createContext(sandbox);
-            await script.runInContext(context);
-
-            for (let i = 0; i < 50; i++) {
-                if (data.pendingCalls.size === 0) {
-                    await new Promise(r => setImmediate(r));
-                    if (data.pendingCalls.size === 0) break;
-                }
-                await Promise.allSettled([...data.pendingCalls]);
+            if (isExecuting) {
+                const errResp = {
+                    id,
+                    status: 'error',
+                    stdout: '',
+                    stderr: '',
+                    error: 'Sidecar process is busy with another request'
+                };
+                realStdoutWrite(JSON.stringify(errResp) + '\n');
+                return;
             }
-        } catch (e) {
-            status = 'error';
-            errorMessage = (e && e.stack) ? e.stack : String(e);
-        } finally {
-            process.stdout.write = origStdoutWrite;
-            process.stderr.write = origStderrWrite;
-        }
 
-        const response = { id, status, stdout: stdoutBuf, stderr: stderrBuf };
-        if (errorMessage) response.error = errorMessage;
-        origStdoutWrite(JSON.stringify(response) + '\n');
-    }
+            isExecuting = true;
+            try {
+                const ctx = reqCtx || {};
+                state.setRequestCtx(ctx);
+
+                let stdoutBuf = '';
+                let stderrBuf = '';
+                const origStdoutWrite = process.stdout.write.bind(process.stdout);
+                const origStderrWrite = process.stderr.write.bind(process.stderr);
+
+                process.stdout.write = (chunk) => { stdoutBuf += chunk.toString(); return true; };
+                process.stderr.write = (chunk) => { stderrBuf += chunk.toString(); return true; };
+
+                let status = 'ok';
+                let errorMessage;
+                const cellFilename = filename || path.join(process.cwd(), 'cell.js');
+
+                try {
+                    let processedCode = transformImports(code);
+                    const wrapped = `(async () => {\n${processedCode}\n})()`;
+                    const script = new vm.Script(wrapped, { filename: cellFilename });
+                    const vuraObj = { io: { data, state, metrics }, data, state, metrics };
+                    const sandbox = {
+                        require, module, exports,
+                        __dirname: path.dirname(cellFilename),
+                        __filename: cellFilename,
+                        console, process, Buffer,
+                        setTimeout, clearTimeout, setInterval, clearInterval, setImmediate,
+                        URL, URLSearchParams, TextEncoder, TextDecoder,
+                        data, state, metrics,
+                        ctx,
+                        vura: vuraObj
+                    };
+                    const context = vm.createContext(sandbox);
+                    await script.runInContext(context);
+
+                    for (let i = 0; i < 50; i++) {
+                        if (data.pendingCalls.size === 0) {
+                            await new Promise(r => setImmediate(r));
+                            if (data.pendingCalls.size === 0) break;
+                        }
+                        await Promise.allSettled([...data.pendingCalls]);
+                    }
+                } catch (e) {
+                    status = 'error';
+                    errorMessage = (e && e.stack) ? e.stack : String(e);
+                } finally {
+                    process.stdout.write = origStdoutWrite;
+                    process.stderr.write = origStderrWrite;
+                }
+
+                const response = { id, status, stdout: stdoutBuf, stderr: stderrBuf };
+                if (errorMessage) response.error = errorMessage;
+                realStdoutWrite(JSON.stringify(response) + '\n');
+            } finally {
+                isExecuting = false;
+            }
+        });
+
+        rl.on('close', resolve);
+    });
 }
 
 async function main() {

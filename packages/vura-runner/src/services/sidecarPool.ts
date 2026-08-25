@@ -6,7 +6,7 @@ export interface SidecarRequest {
     id?: string;
     code: string;
     filename?: string;
-    env?: Record<string, string>;
+    ctx?: { token?: string; depthLimit?: number };
 }
 
 export interface SidecarResponse {
@@ -28,6 +28,7 @@ interface Worker {
     pending: Map<string, Pending>;
     busy: boolean;
     lastUsed: number;
+    rl?: readline.Interface;
 }
 
 const MAX_IDLE_PER_KEY = 2;
@@ -70,14 +71,24 @@ class SidecarPool {
         }
     }
 
+    private removeWorker(worker: Worker) {
+        for (const [key, workers] of this.pools.entries()) {
+            if (workers.includes(worker)) {
+                this.pools.set(key, workers.filter(w => w !== worker));
+            }
+        }
+    }
+
     private kill(worker: Worker) {
         for (const p of worker.pending.values()) {
             clearTimeout(p.timeout);
             p.reject(new Error('Sidecar worker was terminated'));
         }
         worker.pending.clear();
+        try { worker.rl?.close(); } catch { }
         try { worker.proc.stdin?.end(); } catch { }
         try { worker.proc.kill(); } catch { }
+        this.removeWorker(worker);
     }
 
     /** Acquire a worker for `key`, reusing an idle one or spawning a fresh one via `spawnFn`. */
@@ -93,6 +104,7 @@ class SidecarPool {
         const worker: Worker = { proc, pending: new Map(), busy: true, lastUsed: Date.now() };
 
         const rl = readline.createInterface({ input: proc.stdout!, terminal: false });
+        worker.rl = rl;
         rl.on('line', (line: string) => {
             let msg: SidecarResponse;
             try { msg = JSON.parse(line); } catch { return; }
@@ -144,6 +156,7 @@ class SidecarPool {
             }
             const timeout = setTimeout(() => {
                 worker.pending.delete(id);
+                this.kill(worker);
                 reject(new Error('Sidecar execution timed out'));
             }, REQUEST_TIMEOUT_MS);
             worker.pending.set(id, { resolve, reject, timeout });

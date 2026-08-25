@@ -497,6 +497,7 @@ class DataManager:
 class StateManager:
     def __init__(self):
         self._store = {}
+        self._current_ctx = {}
 
     def set(self, key, value):
         self._store[key] = value
@@ -504,12 +505,19 @@ class StateManager:
     def get(self, key, default=None):
         return self._store.get(key, default)
 
+    def set_request_ctx(self, ctx):
+        self._current_ctx = ctx or {}
+
     @property
     def context(self):
+        depth_limit = self._current_ctx.get("depthLimit")
+        if depth_limit is None:
+            depth_limit = int(os.environ.get("VURA_DEPTH_LIMIT", "5"))
         return {
             "storage_path": os.environ.get("VURA_STORAGE_PATH", ""),
             "notebook_id": os.environ.get("VURA_NOTEBOOK_ID", "default"),
-            "depth_limit": int(os.environ.get("VURA_DEPTH_LIMIT", "5")),
+            "depth_limit": depth_limit,
+            "token": self._current_ctx.get("token", ""),
             "env": dict(os.environ)
         }
 
@@ -530,6 +538,8 @@ class MetricsManager:
 
 
 def serve_forever(data, state, metrics, vura_module, vura_io_module):
+    is_executing = False
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -540,44 +550,62 @@ def serve_forever(data, state, metrics, vura_module, vura_io_module):
             continue
 
         req_id = request.get('id')
-        code = request.get('code', '')
-        for key, value in (request.get('env') or {}).items():
-            os.environ[key] = '' if value is None else str(value)
 
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
-        status = 'ok'
-        error_message = None
+        if is_executing:
+            response = {
+                'id': req_id,
+                'status': 'error',
+                'stdout': '',
+                'stderr': '',
+                'error': 'Sidecar process is busy with another request'
+            }
+            sys.stdout.write(json.dumps(response) + '\n')
+            sys.stdout.flush()
+            continue
 
-        exec_globals = {
-            'vura': vura_module,
-            'vura_io': vura_io_module,
-            'data': data,
-            'state': state,
-            'metrics': metrics
-        }
-        curr_pd = data._get_pd() if pd is not None else None
-        if curr_pd is not None:
-            exec_globals['pd'] = curr_pd
-
+        is_executing = True
         try:
-            with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
-                exec(code, exec_globals)
-        except Exception:
-            status = 'error'
-            error_message = traceback.format_exc()
+            code = request.get('code', '')
+            ctx = request.get('ctx') or {}
+            state.set_request_ctx(ctx)
 
-        response = {
-            'id': req_id,
-            'status': status,
-            'stdout': stdout_buf.getvalue(),
-            'stderr': stderr_buf.getvalue(),
-        }
-        if error_message:
-            response['error'] = error_message
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            status = 'ok'
+            error_message = None
 
-        sys.stdout.write(json.dumps(response) + '\n')
-        sys.stdout.flush()
+            exec_globals = {
+                'vura': vura_module,
+                'vura_io': vura_io_module,
+                'data': data,
+                'state': state,
+                'metrics': metrics,
+                'ctx': ctx
+            }
+            curr_pd = data._get_pd() if pd is not None else None
+            if curr_pd is not None:
+                exec_globals['pd'] = curr_pd
+
+            try:
+                with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+                    exec(code, exec_globals)
+            except Exception:
+                status = 'error'
+                error_message = traceback.format_exc()
+
+            response = {
+                'id': req_id,
+                'status': status,
+                'stdout': stdout_buf.getvalue(),
+                'stderr': stderr_buf.getvalue(),
+            }
+            if error_message:
+                response['error'] = error_message
+
+            sys.stdout.write(json.dumps(response) + '\n')
+            sys.stdout.flush()
+        finally:
+            is_executing = False
 
 
 if __name__ == '__main__':
