@@ -1,0 +1,7 @@
+{
+  "vura-dataverse": {
+    "npmPackage": "@vura-data-os/vura-dataverse",
+    "vsixName": "vura-dataverse.vsix",
+    "description": "Dynamics 365 / OData connector"
+  }
+}
