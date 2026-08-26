@@ -1,7 +1,7 @@
 {
   "name": "@vura-data-os/vura-dataverse-sync-core",
   "version": "1.0.0",
-  "description": "Host-agnostic Microsoft Dataverse $batch sync engine, shared by vura-dataverse-adapter (VS Code) and vura-dataverse-runner-plugin (CLI)",
+  "description": "Host-agnostic Microsoft Dataverse $batch sync engine, used by vura-dataverse",
   "keywords": [
     "vura",
     "data-os",

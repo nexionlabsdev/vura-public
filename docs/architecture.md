@@ -54,8 +54,8 @@ graph TD
     A -->|Manages| C[DuckDB]
     A -->|Orchestrates| D[Polyglot Notebook]
 
-    E[Dataverse Adapter Add-on] --->|Registers|R
-    F[vura-dataverse-runner-plugin Add-on] --->|Registers|R
+    E[VURA Dataverse Connector] --->|Registers|R
+    F[VURA SharePoint Connector] --->|Registers|R
 
     E -->|Uses|G[core-sdk]
     F -->|Uses| G

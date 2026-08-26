@@ -1,6 +1,6 @@
 // ─── Host-agnostic execution primitives ─────────────────────────────────────
 // Shared between the VS Code extension (core-extension), the standalone CLI
-// (vura-runner), and any add-on (like vura-dataverse-adapter) that needs to run the
+// (vura-runner), and any add-on (like vura-dataverse) that needs to run the
 // same code against either host.
 
 export type AuthMode = 'ServicePrincipal' | 'DeviceCode' | 'SqlLogin' | 'WindowsAuth';

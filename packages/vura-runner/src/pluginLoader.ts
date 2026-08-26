@@ -2,7 +2,7 @@ import { IVuraProvider, IVuraEnvironment, ICellLogger, ProviderRegistry } from '
 
 /**
  * Loads and registers Add-on plugin packages by name (e.g.
- * "@vura-data-os/vura-dataverse-runner-plugin"). Each package's default export must be
+ * "@vura-data-os/vura-dataverse"). Each package's default export must be
  * a class implementing IVuraProvider. Mirrors what core-extension's
  * `registerProvider` export does for VS Code Add-ons, but discovered via an
  * explicit list instead of the VS Code extension host.

@@ -46,21 +46,12 @@ jobs:
       - name: Build vura-runner
         run: npm run compile --workspace=packages/vura-runner
 
-      - name: Build vura-dataverse-runner-plugin
-        run: npm run compile --workspace=packages/vura-dataverse-runner-plugin
-
-      # core-extension and vura-dataverse-adapter are deliberately NOT workspace
-      # members (see root package.json) — they depend on @vura-data-os/* as
+      # core-extension is deliberately NOT a workspace
+      # member (see root package.json) — it depends on @vura-data-os/* as
       # normal npm packages, resolved from the registry once published.
       # Before that, install-local-deps.sh overlays fresh tarballs of the
       # local library packages instead, so this build reflects the current
       # branch, not whatever's last published.
-      - name: Build vura-dataverse-adapter
-        shell: bash
-        run: |
-          ./scripts/install-local-deps.sh vura-dataverse-adapter
-          cd packages/vura-dataverse-adapter && npm run compile
-
       - name: Build core-extension
         shell: bash
         run: |

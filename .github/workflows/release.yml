@@ -81,7 +81,7 @@ jobs:
       - name: Set package versions to ${{ needs.determine-version.outputs.version }}
         run: |
           VERSION="${{ needs.determine-version.outputs.version }}"
-          for pkg in core-sdk vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin; do
+          for pkg in core-sdk vura-dataverse-sync-core vura-runner; do
             node -e "
               const fs = require('fs');
               const path = 'packages/$pkg/package.json';
@@ -98,16 +98,13 @@ jobs:
           done
 
       # Dependency order: core-sdk has no internal deps; vura-dataverse-sync-core
-      # and vura-runner both depend only on core-sdk; vura-dataverse-runner-plugin
-      # depends on both of those.
+      # and vura-runner both depend only on core-sdk.
       - name: Build core-sdk
         run: npm run compile --workspace=packages/core-sdk
       - name: Build vura-dataverse-sync-core
         run: npm run compile --workspace=packages/vura-dataverse-sync-core
       - name: Build vura-runner
         run: npm run compile --workspace=packages/vura-runner
-      - name: Build vura-dataverse-runner-plugin
-        run: npm run compile --workspace=packages/vura-dataverse-runner-plugin
 
       - name: Test vura-runner
         run: npm test --workspace=packages/vura-runner
@@ -119,7 +116,7 @@ jobs:
         # (see the workflow header comment).
         run: |
           set -e
-          for pkg in core-sdk vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin; do
+          for pkg in core-sdk vura-dataverse-sync-core vura-runner; do
             NAME=$(node -p "require('./packages/$pkg/package.json').name")
             VERSION=$(node -p "require('./packages/$pkg/package.json').version")
             if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
@@ -218,69 +215,9 @@ jobs:
           name: vura-core-${{ matrix.target }}
           path: dist/vura-core-${{ matrix.target }}.vsix
 
-  package-vura-dataverse-adapter:
-    name: Package vura-dataverse-adapter
-    needs: [determine-version, publish-npm]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Update npm CLI
-        run: npm install -g npm@latest
-
-      - name: Set version to ${{ needs.determine-version.outputs.version }}
-        run: |
-          VERSION="${{ needs.determine-version.outputs.version }}"
-          node -e "
-            const fs = require('fs');
-            const path = 'packages/vura-dataverse-adapter/package.json';
-            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
-            pkg.version = '$VERSION';
-            if (pkg.dependencies) {
-              for (const dep of Object.keys(pkg.dependencies)) {
-                if (dep.startsWith('@vura-data-os/')) pkg.dependencies[dep] = '^$VERSION';
-              }
-            }
-            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-      # vura-dataverse-adapter is not an npm workspace member — its @vura-data-os/*
-      # deps resolve as normal npm packages. publish-npm has already published
-      # this exact version, so a plain install here fetches the real thing
-      # from the registry (no local tarball workaround needed at release time).
-      - name: Install dependencies
-        run: cd packages/vura-dataverse-adapter && npm install --no-audit --no-fund
-
-      # No --target: vura-dataverse-adapter has no native dependencies, so one
-      # universal .vsix covers every platform.
-      - name: Package
-        run: ./scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
-
-      - name: Publish to VS Code Marketplace
-        if: ${{ env.VSCE_PAT != '' }}
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx --yes @vscode/vsce publish --packagePath dist/vura-dataverse-adapter.vsix --pat "$VSCE_PAT"
-
-      - name: Publish to Open VSX
-        if: ${{ env.OVSX_PAT != '' }}
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: npx --yes ovsx publish dist/vura-dataverse-adapter.vsix --pat "$OVSX_PAT"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vura-dataverse-adapter
-          path: dist/vura-dataverse-adapter.vsix
-
   github-release:
     name: Create GitHub Release
-    needs: [determine-version, package-core-extension, package-vura-dataverse-adapter]
+    needs: [determine-version, package-core-extension]
     runs-on: ubuntu-latest
     permissions:
       contents: write
