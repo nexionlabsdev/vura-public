@@ -208,6 +208,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        eventSource.addEventListener('cell_completed', (e) => {
+            const data = JSON.parse(e.data);
+            if (isFlowMatch(data.flow, activeFlow)) {
+                appendLog(`Cell ${data.cellIndex + 1}`, `Completed in ${data.durationMs}ms [status: ${data.status}]`);
+            }
+        });
+
         eventSource.addEventListener('log_added', (e) => {
             const data = JSON.parse(e.data);
             if (isFlowMatch(data.flow, activeFlow)) {
