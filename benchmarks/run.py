@@ -3,6 +3,8 @@ import os
 import sys
 import json
 import time
+import tempfile
+import shutil
 try:
     import psutil
     HAS_PSUTIL = True
@@ -16,8 +18,50 @@ import webbrowser
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from typing import Dict, Any, List
 
-# Ensure VURA modules can be imported if needed
-sys.path.insert(0, os.path.abspath("packages/vura-io-py"))
+class SidecarClient:
+    def __init__(self, command: List[str], cwd: str, storage_path: str, env_extra: Dict[str, str] = None):
+        env = dict(os.environ)
+        env["VURA_STORAGE_PATH"] = storage_path
+        if env_extra:
+            env.update(env_extra)
+        self.proc = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        self.storage_path = storage_path
+        self._req_id = 0
+
+    def execute_code(self, code: str) -> Dict[str, Any]:
+        self._req_id += 1
+        req_id = f"bench_{self._req_id}"
+        payload = {
+            "id": req_id,
+            "code": code,
+            "ctx": {"storagePath": self.storage_path}
+        }
+        self.proc.stdin.write(json.dumps(payload) + "\n")
+        self.proc.stdin.flush()
+
+        line = self.proc.stdout.readline()
+        if not line:
+            stderr_out = self.proc.stderr.read() if self.proc.stderr else ""
+            raise RuntimeError(f"Sidecar process closed unexpectedly. Stderr: {stderr_out}")
+        return json.loads(line.strip())
+
+    def close(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+
 
 class VuraBenchmarkingTool:
     def __init__(self, tier: str = "quick", output_file: str = "benchmarks/results.jsonl"):
@@ -86,59 +130,124 @@ class VuraBenchmarkingTool:
     def run_suite(self):
         print(f"🚀 Running VURA Benchmarks [Tier: {self.tier.upper()}]...")
         os.makedirs(os.path.dirname(os.path.abspath(self.output_file)), exist_ok=True)
-        # Clear or initialize output file
         with open(self.output_file, "w", encoding="utf-8") as f:
             pass
 
-        # Suite 1: append_scaling
-        print(" -> Suite 1: append() latency vs table size (Python & Node sidecar engines)")
-        try:
-            from vura.io.data import DataManager
-            data_mgr = DataManager()
-            table_name = "bench_append_test"
-            current_rows = 0
+        repo_root = os.path.abspath(".")
+        py_sidecar_script = os.path.join(repo_root, "packages/vura-runner/src/assets/sidecar.py")
+        node_sidecar_script = os.path.join(repo_root, "packages/vura-runner/src/assets/sidecar.js")
 
+        node_bin = shutil.which("node") or "node"
+        python_bin = sys.executable or "python3"
+
+        extra_node_paths = [
+            os.path.join(repo_root, "node_modules"),
+            os.path.join(repo_root, "packages/vura-runner/node_modules")
+        ]
+        node_path_str = os.path.pathsep.join(extra_node_paths)
+
+        # Suite 1: append_scaling (Python & Node sidecar engines)
+        print(" -> Suite 1: append() latency vs table size (Python & Node sidecar engines)")
+
+        # 1a. Python sidecar worker
+        temp_dir_py = tempfile.mkdtemp(prefix="vura_bench_py_")
+        py_client = SidecarClient([python_bin, "-u", py_sidecar_script, "--serve"], repo_root, temp_dir_py)
+        current_rows_py = 0
+        try:
             for target_rows in self.checkpoints:
-                rows_to_add = target_rows - current_rows
+                rows_to_add = target_rows - current_rows_py
                 batch_size = 10_000 if rows_to_add >= 10_000 else rows_to_add
                 batches = rows_to_add // batch_size
 
                 for _ in range(batches):
-                    # Synthetic data batch
-                    batch_data = [{"id": i, "val": i * 1.5, "name": f"row_{i}"} for i in range(batch_size)]
+                    code = f"""
+batch_data = [{{"id": i, "val": i * 1.5, "name": f"row_{{i}}"}} for i in range({batch_size})]
+if {current_rows_py} == 0 and data._find_existing_table_path('bench_append_test')[0] is None:
+    data.put('bench_append_test', batch_data)
+else:
+    data.append('bench_append_test', batch_data)
+"""
                     start_t = time.time()
-                    if current_rows == 0:
-                        data_mgr.put(table_name, batch_data)
-                    else:
-                        data_mgr.append(table_name, batch_data)
+                    res = py_client.execute_code(code)
                     dur_ms = (time.time() - start_t) * 1000.0
-                    current_rows += batch_size
-                    self.log_measurement("append_scaling", "append", current_rows, batch_size, "python", dur_ms)
-                print(f"    [Python] Target {target_rows:,} rows reached. Current RSS: {self._get_process_rss_mb()} MB")
+                    if res.get("status") != "ok":
+                        raise RuntimeError(f"Python sidecar error: {res.get('error')}")
 
+                    current_rows_py += batch_size
+                    self.log_measurement("append_scaling", "append", current_rows_py, batch_size, "python", dur_ms)
+                print(f"    [Python] Target {target_rows:,} rows reached. Current RSS: {self._get_process_rss_mb()} MB")
         except Exception as e:
             print(f"    [!] Error in Suite 1 Python: {e}")
+        finally:
+            py_client.close()
+            shutil.rmtree(temp_dir_py, ignore_errors=True)
+
+        # 1b. Node sidecar worker
+        temp_dir_node = tempfile.mkdtemp(prefix="vura_bench_node_")
+        node_client = SidecarClient([node_bin, node_sidecar_script, "--serve"], repo_root, temp_dir_node, {"NODE_PATH": node_path_str})
+        current_rows_node = 0
+        try:
+            for target_rows in self.checkpoints:
+                rows_to_add = target_rows - current_rows_node
+                batch_size = 10_000 if rows_to_add >= 10_000 else rows_to_add
+                batches = rows_to_add // batch_size
+
+                for _ in range(batches):
+                    code = f"""
+const batchData = Array.from({{ length: {batch_size} }}, (_, i) => ({{ id: i, val: i * 1.5, name: 'row_' + i }}));
+const info = data.findExistingTablePath('bench_append_test');
+if (!info) {{
+    await data.put('bench_append_test', batchData);
+}} else {{
+    await data.append('bench_append_test', batchData);
+}}
+"""
+                    start_t = time.time()
+                    res = node_client.execute_code(code)
+                    dur_ms = (time.time() - start_t) * 1000.0
+                    if res.get("status") != "ok":
+                        raise RuntimeError(f"Node sidecar error: {res.get('error')}")
+
+                    current_rows_node += batch_size
+                    self.log_measurement("append_scaling", "append", current_rows_node, batch_size, "javascript", dur_ms)
+                print(f"    [Node] Target {target_rows:,} rows reached. Current RSS: {self._get_process_rss_mb()} MB")
+        except Exception as e:
+            print(f"    [!] Error in Suite 1 Node: {e}")
+        finally:
+            node_client.close()
+            shutil.rmtree(temp_dir_node, ignore_errors=True)
 
         # Suite 2: read_scaling (stream) - object vs arrow
         print(" -> Suite 2: stream() latency and RSS memory (object vs arrow)")
+        temp_dir_s2 = tempfile.mkdtemp(prefix="vura_bench_s2_")
+        py_client_s2 = SidecarClient([python_bin, "-u", py_sidecar_script, "--serve"], repo_root, temp_dir_s2)
         try:
-            from vura.io.data import DataManager
-            data_mgr = DataManager()
             for rows in [10_000, 50_000, 100_000]:
                 if rows in self.checkpoints:
+                    # Seed dataset
+                    seed_code = f"data.put('bench_stream_test', [{{\"id\": i, \"val\": i * 1.5}} for i in range({rows})])"
+                    py_client_s2.execute_code(seed_code)
+
                     # Test format: dict (object)
+                    stream_obj_code = f"batches = list(data.stream('bench_stream_test', batch_size={rows}, format='dict'))"
                     start_t = time.time()
-                    batches_obj = list(data_mgr.stream("bench_append_test", batch_size=rows, format="dict"))
+                    res_obj = py_client_s2.execute_code(stream_obj_code)
                     dur_obj = (time.time() - start_t) * 1000.0
-                    self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_obj, {"format": "object"})
+                    if res_obj.get("status") == "ok":
+                        self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_obj, {"format": "object"})
 
                     # Test format: arrow
+                    stream_arrow_code = f"batches = list(data.stream('bench_stream_test', batch_size={rows}, format='arrow'))"
                     start_t = time.time()
-                    batches_arrow = list(data_mgr.stream("bench_append_test", batch_size=rows, format="arrow"))
+                    res_arrow = py_client_s2.execute_code(stream_arrow_code)
                     dur_arrow = (time.time() - start_t) * 1000.0
-                    self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_arrow, {"format": "arrow"})
+                    if res_arrow.get("status") == "ok":
+                        self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_arrow, {"format": "arrow"})
         except Exception as e:
             print(f"    [!] Error in Suite 2 Python: {e}")
+        finally:
+            py_client_s2.close()
+            shutil.rmtree(temp_dir_s2, ignore_errors=True)
 
         print(" ✓ Benchmark suite completed successfully.")
 

@@ -6,13 +6,12 @@ This repository is the open-source core. Each package below has its own README w
 
 - **[`packages/core-extension`](packages/core-extension/README.md)** — the VS Code extension that renders `.flownb` notebooks with SQL, Python, JavaScript, and HTML cells, backed by an embedded DuckDB engine.
 - **[`packages/core-sdk`](packages/core-sdk/README.md)** — the shared TypeScript SDK (`IVuraProvider`, `ProviderRegistry`, `IConnectionAdapter`, `FlownbCell`/`ICellLogger`/`IVuraEnvironment`, the Auto-Schema Flattener) used to build add-ons that run in either the VS Code extension or the CLI.
-- **[`packages/vura-dataverse-sync-core`](packages/vura-dataverse-sync-core/README.md)** — the host-agnostic Dynamics 365 / OData `$batch` sync engine, shared by the two Add-ons below.
-- **[`packages/vura-dataverse-adapter`](packages/vura-dataverse-adapter/README.md)** — a VS Code Add-on wrapping `vura-dataverse-sync-core`, showing how a real connector plugs into the extension.
-- **[`packages/vura-dataverse-runner-plugin`](packages/vura-dataverse-runner-plugin/README.md)** — a `vura-runner` CLI plugin wrapping the same `vura-dataverse-sync-core`, showing how a connector plugs into the CLI instead.
+- **[`packages/vura-dataverse-sync-core`](packages/vura-dataverse-sync-core/README.md)** — the host-agnostic Dynamics 365 / OData `$batch` sync engine.
+- **[`packages/vura-dataverse`](packages/vura-dataverse/README.md)** — CLI and VS Code extension integrations for Dataverse were unified into a single `packages/vura-dataverse` package (see Phase 9d) — the previously separate `vura-dataverse-adapter` and `vura-dataverse-runner-plugin` packages no longer exist.
 - **[`packages/vura-runner`](packages/vura-runner/README.md)** — a standalone CLI/engine that executes `.flownb` notebooks outside of VS Code.
 - **`samples/`** — example `.flownb` notebooks.
 
-The system is built around a **micro-kernel + plugin model**: `core-extension` (VS Code) and `vura-runner` (CLI) are both kernels sharing one Add-on contract, defined in `core-sdk`. Add-ons like `vura-dataverse-adapter`/`vura-dataverse-runner-plugin` register with whichever kernel loads them via the shared `ProviderRegistry` — in VS Code, on extension activation; in the CLI, via a notebook's `requiredPlugins` field or `vura-runner config set vura.plugins`.
+The system is built around a **micro-kernel + plugin model**: `core-extension` (VS Code) and `vura-runner` (CLI) are both kernels sharing one Add-on contract, defined in `core-sdk`. Add-ons like `vura-dataverse` register with whichever kernel loads them via the shared `ProviderRegistry` — in VS Code, on extension activation; in the CLI, via a notebook's `requiredPlugins` field or `vura-runner config set vura.plugins`.
 
 ## Getting started
 

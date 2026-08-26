@@ -8,7 +8,6 @@
     "packages/vura-dataverse",
     "packages/vura-dataverse-sync-core",
     "packages/vura-runner",
-    "packages/vura-dataverse-runner-plugin",
     "packages/vura-sharepoint",
     "packages/vura-io"
   ],
