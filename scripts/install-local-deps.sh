@@ -45,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-LIB_PACKAGES=(core-sdk vura-io vura-dataverse-sync-core vura-runner)
+LIB_PACKAGES=(core-sdk vura-io vura-odata-sync-core vura-dataverse-sync-core vura-runner)
 
 echo "==> Building library packages"
 (cd "$ROOT_DIR" && npm install --no-audit --no-fund)

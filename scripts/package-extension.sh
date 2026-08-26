@@ -58,6 +58,25 @@ if [[ -n "$OUT_PATH" ]]; then
   mkdir -p "$(dirname "$OUT_PATH")"
   PACKAGE_ARGS+=(-o "$(cd "$(dirname "$OUT_PATH")" && pwd)/$(basename "$OUT_PATH")")
 fi
+
+BACKUP="$(mktemp "${TMPDIR:-/tmp}/vura-ext-backup.XXXXXX")"
+cp "$EXT_DIR/package.json" "$BACKUP"
+cleanup_ext() {
+  cp "$BACKUP" "$EXT_DIR/package.json"
+  rm -f "$BACKUP"
+}
+trap cleanup_ext EXIT
+
+node -e '
+  const fs = require("fs");
+  const pkgPath = process.argv[1];
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  if (pkg.name && pkg.name.includes("/")) {
+    pkg.name = pkg.name.split("/").pop();
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+  }
+' "$EXT_DIR/package.json"
+
 (cd "$EXT_DIR" && npx --yes @vscode/vsce "${PACKAGE_ARGS[@]}")
 
 if [[ -z "$OUT_PATH" ]]; then
