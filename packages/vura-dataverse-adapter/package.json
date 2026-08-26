@@ -2,6 +2,7 @@
   "name": "vura-dataverse-adapter",
   "displayName": "Dataverse Adapter",
   "description": "Dataverse Add-on for Vura Data OS",
+  "deprecated": "Deprecated: Use @vura-data-os/vura-dataverse instead.",
   "version": "1.0.0",
   "publisher": "nexion-labs",
   "engines": {

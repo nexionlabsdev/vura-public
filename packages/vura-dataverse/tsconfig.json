@@ -1,20 +1,20 @@
 {
   "compilerOptions": {
-    "module": "CommonJS",
     "target": "ES2022",
-    "outDir": "out",
+    "module": "CommonJS",
+    "moduleResolution": "node",
     "lib": ["ES2022"],
+    "declaration": true,
     "sourceMap": true,
-    "rootDir": "src",
+    "outDir": "./out",
+    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "declaration": true,
     "composite": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules"],
   "references": [
     { "path": "../core-sdk" },
     { "path": "../vura-odata-sync-core" }
