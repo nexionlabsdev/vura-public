@@ -1,5 +1,5 @@
 // Shared, host-agnostic types (cell shape, logger, environment, SQL profile)
-// now live in @vura-data-os/core-sdk so Add-ons (like vura-dataverse-adapter) can use
+// now live in @vura-data-os/core-sdk so Add-ons (like vura-dataverse) can use
 // them without depending on this package. Re-exported here so existing
 // imports from '@vura-data-os/vura-runner' keep working.
 export {

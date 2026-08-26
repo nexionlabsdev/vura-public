@@ -1,6 +1,6 @@
 # @vura-data-os/vura-dataverse-sync-core
 
-Host-agnostic Dynamics 365 (Dataverse) OData v4 `$batch` sync engine for [VURA](https://github.com/nexionlabsdev/vura-public). No `vscode` dependency — the same logic backs both the VS Code Add-on (`@vura-data-os/vura-dataverse-adapter`) and the `vura-runner` CLI plugin (`@vura-data-os/vura-dataverse-runner-plugin`).
+Host-agnostic Dynamics 365 (Dataverse) OData v4 `$batch` sync engine for [VURA](https://github.com/nexionlabsdev/vura-public). No `vscode` dependency — the same logic backs `@vura-data-os/vura-dataverse`.
 
 ## What's in it
 
@@ -8,7 +8,7 @@ Host-agnostic Dynamics 365 (Dataverse) OData v4 `$batch` sync engine for [VURA](
 
 `parseArgs(commandLine)` is also exported directly if you need to validate a command line without running the sync.
 
-This package isn't meant to be used standalone — install it via `@vura-data-os/vura-dataverse-adapter` (VS Code) or `@vura-data-os/vura-dataverse-runner-plugin` (CLI) instead. See the main repo's [Dataverse Integration](https://github.com/nexionlabsdev/vura-public/blob/main/docs/dataverse_integration.md) doc.
+This package isn't meant to be used standalone — use `@vura-data-os/vura-dataverse` instead. See the main repo's [Dataverse Integration](https://github.com/nexionlabsdev/vura-public/blob/main/docs/dataverse_integration.md) doc.
 
 ## License
 

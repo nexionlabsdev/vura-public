@@ -1,4 +1,4 @@
-.PHONY: build install install-runner build-mac build-linux build-windows build-vura-dataverse-adapter clean
+.PHONY: build install install-runner build-mac build-linux build-windows clean
 
 # TypeScript compile: npm install (workspace: the 4 library packages) + each
 # package's own `compile` script, in dependency order. core-extension is not
@@ -48,13 +48,7 @@ build-windows:
 	bash ./scripts/package-extension.sh core-extension --target win32-x64 -o dist/vura-core-win32-x64.vsix
 	bash ./scripts/package-extension.sh core-extension --target win32-arm64 -o dist/vura-core-win32-arm64.vsix
 
-# The Dataverse Adapter has no native dependencies (pure JS: grpc-js, proto-loader,
-# core-sdk, vura-dataverse-sync-core), so it doesn't need per-platform builds.
-build-vura-dataverse-adapter:
-	bash ./scripts/install-local-deps.sh vura-dataverse-adapter
-	bash ./scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
-
 clean:
 	rm -rf dist
 	rm -rf packages/*/out packages/*/tsconfig.tsbuildinfo
-	rm -rf packages/core-extension/node_modules packages/vura-dataverse-adapter/node_modules
+	rm -rf packages/core-extension/node_modules

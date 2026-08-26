@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Packages a VS Code extension (packages/<name>) as a .vsix.
 #
-# core-extension and vura-dataverse-adapter are standalone (non-workspace) npm
-# projects — their @vura-data-os/* dependencies resolve as normal npm
-# packages, not workspace symlinks, so vsce can package them directly with
-# no staging/tarball workaround needed.
+# core-extension is a standalone (non-workspace) npm project — its @vura-data-os/*
+# dependencies resolve as normal npm packages, not workspace symlinks, so vsce
+# can package them directly with no staging/tarball workaround needed.
 #
 # This script assumes packages/<name>/node_modules is already populated:
 #   - Before the packages are published (or to test local changes to a
@@ -14,7 +13,6 @@
 #
 # Usage: scripts/package-extension.sh <package-name> [--target <vsce-target>] [-o <output.vsix>]
 #   e.g. scripts/package-extension.sh core-extension --target darwin-arm64 -o dist/vura-core-darwin-arm64.vsix
-#        scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
 
 set -euo pipefail
 

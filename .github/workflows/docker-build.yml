@@ -73,6 +73,32 @@ jobs:
           fi
           docker rm -f runner-flag-plugin
 
+      - name: Test vura-runner (env var: VURA_PLUGINS=vura-sharepoint)
+        run: |
+          docker run -d --name runner-env-sharepoint -p 3003:3000 -e VURA_PLUGINS=vura-sharepoint vura-runner:test
+          sleep 5
+          curl -f http://localhost:3003/api/flows || (docker logs runner-env-sharepoint && exit 1)
+          LOGS=$(docker logs runner-env-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -q "@vura-data-os/vura-sharepoint"; then
+            echo "Error: @vura-data-os/vura-sharepoint plugin was not recognized!"
+            exit 1
+          fi
+          docker rm -f runner-env-sharepoint
+
+      - name: Test vura-runner (CLI flag: --plugins=vura-sharepoint)
+        run: |
+          docker run -d --name runner-flag-sharepoint -p 3004:3000 vura-runner:test --plugins=vura-sharepoint
+          sleep 5
+          curl -f http://localhost:3004/api/flows || (docker logs runner-flag-sharepoint && exit 1)
+          LOGS=$(docker logs runner-flag-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -q "@vura-data-os/vura-sharepoint"; then
+            echo "Error: @vura-data-os/vura-sharepoint plugin was not recognized!"
+            exit 1
+          fi
+          docker rm -f runner-flag-sharepoint
+
       # --- Test vura-web-studio ---
       - name: Test vura-web-studio (no plugins)
         run: |
@@ -104,6 +130,30 @@ jobs:
             exit 1
           fi
           docker rm -f studio-flag-plugin
+
+      - name: Test vura-web-studio (env var: VURA_PLUGINS=vura-sharepoint)
+        run: |
+          docker run -d --name studio-env-sharepoint -p 8083:8080 -e PASSWORD=testpass -e VURA_PLUGINS=vura-sharepoint vura-web-studio:test
+          sleep 5
+          LOGS=$(docker logs studio-env-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -qi "vura-sharepoint"; then
+            echo "Error: vura-sharepoint plugin extension was not recognized!"
+            exit 1
+          fi
+          docker rm -f studio-env-sharepoint
+
+      - name: Test vura-web-studio (CLI flag: --plugins=vura-sharepoint)
+        run: |
+          docker run -d --name studio-flag-sharepoint -p 8084:8080 -e PASSWORD=testpass vura-web-studio:test --plugins=vura-sharepoint
+          sleep 5
+          LOGS=$(docker logs studio-flag-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -qi "vura-sharepoint"; then
+            echo "Error: vura-sharepoint plugin extension was not recognized!"
+            exit 1
+          fi
+          docker rm -f studio-flag-sharepoint
 
   # --- Publish Gating (Manual workflow_dispatch trigger only) ---
   publish-images:

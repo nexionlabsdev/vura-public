@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Installs a non-workspace package's (core-extension, vura-dataverse-adapter) own
+# Installs a non-workspace package's (core-extension) own
 # dependencies for local building/testing.
 #
-# core-extension and vura-dataverse-adapter are deliberately NOT npm workspace
+# core-extension is deliberately NOT an npm workspace
 # members (see root package.json) — they depend on @vura-data-os/* like any
 # real npm consumer would, resolved from the registry once those packages are
 # published. Before that first publish (or while testing local changes to a

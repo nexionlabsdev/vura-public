@@ -3,5 +3,10 @@
     "npmPackage": "@vura-data-os/vura-dataverse",
     "vsixName": "vura-dataverse.vsix",
     "description": "Dynamics 365 / OData connector"
+  },
+  "vura-sharepoint": {
+    "npmPackage": "@vura-data-os/vura-sharepoint",
+    "vsixName": "vura-sharepoint.vsix",
+    "description": "SharePoint Lists OData connector"
   }
 }
