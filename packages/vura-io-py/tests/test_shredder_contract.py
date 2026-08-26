@@ -2,7 +2,7 @@ import json
 import os
 import sys
 import subprocess
-import pytest
+import unittest
 from vura.io.shredder import shred_json, unshred_json
 
 class LCG:
@@ -94,56 +94,57 @@ console.log(JSON.stringify({{ jsShredResults, jsUnshredPyShredResults }}));
     return json.loads(res.stdout)
 
 
-def test_shredder_cross_language_contract():
-    num_fixtures = 100
-    fixtures = [generate_random_fixture(1000 + i) for i in range(num_fixtures)]
-    batch_input = []
-    py_shred_results = []
+class TestShredderContract(unittest.TestCase):
+    def test_shredder_cross_language_contract(self):
+        num_fixtures = 100
+        fixtures = [generate_random_fixture(1000 + i) for i in range(num_fixtures)]
+        batch_input = []
+        py_shred_results = []
 
-    for i, fixture in enumerate(fixtures):
-        ds_name = f"ds_{i}"
-        tables, manifest, table_names = shred_json(ds_name, fixture)
-        py_shred = {"name": ds_name, "tables": tables, "manifest": manifest, "tableNames": table_names}
-        py_shred_results.append(py_shred)
-        batch_input.append({
-            "name": ds_name,
-            "obj": fixture,
-            "pyManifest": manifest,
-            "pyTables": tables
-        })
+        for i, fixture in enumerate(fixtures):
+            ds_name = f"ds_{i}"
+            tables, manifest, table_names = shred_json(ds_name, fixture)
+            py_shred = {"name": ds_name, "tables": tables, "manifest": manifest, "tableNames": table_names}
+            py_shred_results.append(py_shred)
+            batch_input.append({
+                "name": ds_name,
+                "obj": fixture,
+                "pyManifest": manifest,
+                "pyTables": tables
+            })
 
-    node_batch_res = run_node_batch_shred_and_unshred(batch_input)
-    js_shred_results = node_batch_res["jsShredResults"]
-    js_unshred_py_shred_results = node_batch_res["jsUnshredPyShredResults"]
+        node_batch_res = run_node_batch_shred_and_unshred(batch_input)
+        js_shred_results = node_batch_res["jsShredResults"]
+        js_unshred_py_shred_results = node_batch_res["jsUnshredPyShredResults"]
 
-    for i in range(num_fixtures):
-        fixture = fixtures[i]
-        py_shred = py_shred_results[i]
-        js_shred = js_shred_results[i]
+        for i in range(num_fixtures):
+            fixture = fixtures[i]
+            py_shred = py_shred_results[i]
+            js_shred = js_shred_results[i]
 
-        assert sorted(py_shred["tables"].keys()) == sorted(js_shred["tables"].keys())
-        assert py_shred["manifest"]["dataset_name"] == js_shred["manifest"]["dataset_name"]
-        assert py_shred["manifest"]["root_table"] == js_shred["manifest"]["root_table"]
-        assert py_shred["manifest"]["is_root_array"] == js_shred["manifest"]["is_root_array"]
-        assert sorted(py_shred["manifest"]["tables"].keys()) == sorted(js_shred["manifest"]["tables"].keys())
+            self.assertEqual(sorted(py_shred["tables"].keys()), sorted(js_shred["tables"].keys()))
+            self.assertEqual(py_shred["manifest"]["dataset_name"], js_shred["manifest"]["dataset_name"])
+            self.assertEqual(py_shred["manifest"]["root_table"], js_shred["manifest"]["root_table"])
+            self.assertEqual(py_shred["manifest"]["is_root_array"], js_shred["manifest"]["is_root_array"])
+            self.assertEqual(sorted(py_shred["manifest"]["tables"].keys()), sorted(js_shred["manifest"]["tables"].keys()))
 
-        for t_name in py_shred["manifest"]["tables"].keys():
-            py_meta = py_shred["manifest"]["tables"][t_name]
-            js_meta = js_shred["manifest"]["tables"][t_name]
+            for t_name in py_shred["manifest"]["tables"].keys():
+                py_meta = py_shred["manifest"]["tables"][t_name]
+                js_meta = js_shred["manifest"]["tables"][t_name]
 
-            assert py_meta["table_name"] == js_meta["table_name"]
-            assert py_meta["parent_table"] == js_meta["parent_table"]
-            assert py_meta["field_name"] == js_meta["field_name"]
-            assert py_meta["node_type"] == js_meta["node_type"]
-            assert py_meta["field_order"] == js_meta["field_order"]
-            assert py_meta["children"] == js_meta["children"]
-            assert len(py_shred["tables"][t_name]) == len(js_shred["tables"][t_name])
+                self.assertEqual(py_meta["table_name"], js_meta["table_name"])
+                self.assertEqual(py_meta["parent_table"], js_meta["parent_table"])
+                self.assertEqual(py_meta["field_name"], js_meta["field_name"])
+                self.assertEqual(py_meta["node_type"], js_meta["node_type"])
+                self.assertEqual(py_meta["field_order"], js_meta["field_order"])
+                self.assertEqual(py_meta["children"], js_meta["children"])
+                self.assertEqual(len(py_shred["tables"][t_name]), len(js_shred["tables"][t_name]))
 
-        # Py -> Py roundtrip
-        assert unshred_json(py_shred["manifest"], py_shred["tables"]) == fixture
+            # Py -> Py roundtrip
+            self.assertEqual(unshred_json(py_shred["manifest"], py_shred["tables"]), fixture)
 
-        # Py -> JS cross-unshred
-        assert js_unshred_py_shred_results[i] == fixture
+            # Py -> JS cross-unshred
+            self.assertEqual(js_unshred_py_shred_results[i], fixture)
 
-        # JS -> Py cross-unshred
-        assert unshred_json(js_shred["manifest"], js_shred["tables"]) == fixture
+            # JS -> Py cross-unshred
+            self.assertEqual(unshred_json(js_shred["manifest"], js_shred["tables"]), fixture)

@@ -6,7 +6,7 @@ export interface SidecarRequest {
     id?: string;
     code: string;
     filename?: string;
-    ctx?: { token?: string; depthLimit?: number };
+    ctx?: { storagePath?: string; token?: string; depthLimit?: number };
 }
 
 export interface SidecarResponse {

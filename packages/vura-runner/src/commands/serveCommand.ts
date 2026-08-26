@@ -9,6 +9,7 @@ import { DuckDbManager } from '../services/duckDbManager';
 import { sidecarPool } from '../services/sidecarPool';
 import express from 'express';
 import { EventEmitter } from 'events';
+import * as crypto from 'crypto';
 import swaggerUi from 'swagger-ui-express';
 import { generateSwaggerDoc } from './swaggerGenerator';
 import { parseFlownbContent } from '../utils/flownbLoader';
@@ -398,12 +399,23 @@ export async function startServer(port: number, dir: string, envPath?: string, m
     });
 
     app.get('/api/events', (req, res) => {
+        const targetRunId = req.query.runId as string | undefined;
+
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
         const listener = (event: { type: string, data: string }) => {
+            if (targetRunId) {
+                try {
+                    const parsed = JSON.parse(event.data);
+                    const eventRunId = parsed.runId || parsed.id;
+                    if (eventRunId !== targetRunId) {
+                        return;
+                    }
+                } catch {}
+            }
             res.write(`event: ${event.type}\n`);
             res.write(`data: ${event.data}\n\n`);
         };
@@ -430,12 +442,13 @@ export async function startServer(port: number, dir: string, envPath?: string, m
 
         const notebookFile = isSingleFile ? path.basename(targetPath) : relPath;
 
-        const runId = Math.random().toString(36).substring(2, 9);
+        const runId = crypto.randomUUID();
         const startTime = Date.now();
+        const isAsync = req.query.async === 'true';
 
         const executeRun = async () => {
             const mark0 = Date.now();
-            broadcastEvent('run_started', { id: runId, flow: notebookFile });
+            broadcastEvent('run_started', { id: runId, runId, flow: notebookFile });
             await logHistoryToDuckDb(env, runId, notebookFile, 'running', null);
             const mark1 = Date.now();
 
@@ -479,6 +492,15 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                         const cellError = result.error;
                         const cellStatus = result.status;
                         const cellDuration = result.durationMs;
+                        broadcastEvent('cell_completed', {
+                            runId,
+                            flow: notebookFile,
+                            cellIndex: i,
+                            status: cellStatus,
+                            durationMs: cellDuration,
+                            outputs: logger.currentCellOutputs,
+                            error: cellError
+                        });
                         logCellToDuckDb(env, runId, notebookFile, i, cellStatus, cellDuration, JSON.stringify(logger.currentCellLogs), JSON.stringify(logger.currentCellOutputs), cellError).catch(() => {});
                     }
                 }), EXECUTION_TIMEOUT_MS);
@@ -536,22 +558,24 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                 await logHistoryToDuckDb(env, runId, notebookFile, 'success', duration);
             }
 
-            if (finalResponse) {
-                if (finalResponse.$headers) res.set(finalResponse.$headers);
-                const statusCode = execResult.status === 'error' ? 500 : 200;
-                
-                if (finalResponse.$rawBody !== undefined) {
-                    return res.status(statusCode).send(finalResponse.$rawBody);
-                }
-                let body = finalResponse.$body;
-                if (typeof body === 'object') return res.status(statusCode).json(body);
-                else return res.status(statusCode).send(body);
-            }
+            if (!res.headersSent) {
+                if (finalResponse) {
+                    if (finalResponse.$headers) res.set(finalResponse.$headers);
+                    const statusCode = execResult.status === 'error' ? 500 : 200;
 
-            if (execResult.status === 'error') {
-                return res.status(500).json({ error: execResult.error });
+                    if (finalResponse.$rawBody !== undefined) {
+                        return res.status(statusCode).send(finalResponse.$rawBody);
+                    }
+                    let body = finalResponse.$body;
+                    if (typeof body === 'object') return res.status(statusCode).json(body);
+                    else return res.status(statusCode).send(body);
+                }
+
+                if (execResult.status === 'error') {
+                    return res.status(500).json({ error: execResult.error });
+                }
+                return res.json({ success: true, message: 'Flow executed successfully' });
             }
-            return res.json({ success: true, message: 'Flow executed successfully' });
             }, env);
 
         } catch (err: any) {
@@ -562,7 +586,9 @@ export async function startServer(port: number, dir: string, envPath?: string, m
             broadcastEvent('run_failed', { runId, flow: notebookFile, error: errMsg });
             await logHistoryToDuckDb(env, runId, notebookFile, 'error', duration);
             
-            return res.status(500).json({ error: errMsg });
+            if (!res.headersSent) {
+                return res.status(500).json({ error: errMsg });
+            }
         } finally {
             try {
                 await fs.rm(runStoragePath, { recursive: true, force: true });
@@ -570,8 +596,12 @@ export async function startServer(port: number, dir: string, envPath?: string, m
         }
         };
 
-        // Execute run concurrently with isolated schema session
-        executeRun();
+        if (isAsync) {
+            res.status(202).json({ runId });
+            executeRun();
+        } else {
+            await executeRun();
+        }
     });
 
     return new Promise((resolve) => {

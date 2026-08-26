@@ -573,6 +573,9 @@ def serve_forever(data, state, metrics, vura_module, vura_io_module):
             code = request.get('code', '')
             ctx = request.get('ctx') or {}
             state.set_request_ctx(ctx)
+            if ctx.get('storagePath'):
+                data.storage_path = ctx['storagePath']
+                os.environ['VURA_STORAGE_PATH'] = ctx['storagePath']
 
             stdout_buf = io.StringIO()
             stderr_buf = io.StringIO()

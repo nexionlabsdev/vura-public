@@ -805,6 +805,10 @@ function serveForever(data, state, metrics) {
             try {
                 const ctx = reqCtx || {};
                 state.setRequestCtx(ctx);
+                if (ctx.storagePath) {
+                    data.storagePath = ctx.storagePath;
+                    process.env.VURA_STORAGE_PATH = ctx.storagePath;
+                }
 
                 let stdoutBuf = '';
                 let stderrBuf = '';
