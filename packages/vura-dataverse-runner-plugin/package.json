@@ -1,7 +1,8 @@
 {
   "name": "@vura-data-os/vura-dataverse-runner-plugin",
   "version": "1.0.0",
-  "description": "vura-runner CLI plugin adding !sync_dataverse support, sharing its sync engine with the VS Code vura-dataverse-adapter Add-on",
+  "description": "vura-runner CLI plugin adding !sync_dataverse support [DEPRECATED]",
+  "deprecated": "Deprecated: Use @vura-data-os/vura-dataverse instead.",
   "keywords": [
     "vura",
     "data-os",

@@ -1,0 +1,37 @@
+{
+  "name": "@vura-data-os/vura-odata-sync-core",
+  "version": "1.0.0",
+  "description": "Generic host-agnostic OData v4 $batch sync engine",
+  "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/vura-odata-sync-core#readme",
+  "license": "AGPL-3.0",
+  "author": "Nexion Labs <info@nexionlabs.dev>",
+  "type": "commonjs",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "files": [
+    "out"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "compile": "tsc -b ./",
+    "watch": "tsc -b -w ./",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@vura-data-os/core-sdk": "^1.0.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^18.19.0",
+    "@types/uuid": "^10.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.9.3"
+  }
+}
