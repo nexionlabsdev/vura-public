@@ -71,6 +71,7 @@ export class DuckDbManager {
     private db?: DuckDBInstance;
     private connection?: DuckDBConnection;
     private dbPath!: string;
+    private updateViewChain: Promise<void> = Promise.resolve();
 
     private constructor() { }
 
@@ -89,6 +90,26 @@ export class DuckDbManager {
         return mgr;
     }
 
+    /**
+     * Executes an async function with an isolated in-memory DuckDbManager instance and guarantees disposal upon completion or error.
+     */
+    public static async withIsolated<T>(
+        fn: (mgr: DuckDbManager) => Promise<T>,
+        env?: IVuraEnvironment
+    ): Promise<T> {
+        const mgr = await DuckDbManager.createIsolated(env);
+        try {
+            return await fn(mgr);
+        } finally {
+            mgr.dispose();
+        }
+    }
+
+    /**
+     * Creates an isolated in-memory DuckDbManager instance.
+     * Note: Callers of `createIsolated()` are responsible for calling `dispose()` on the returned instance.
+     * `DuckDbManager.withIsolated()` is preferred for new code to ensure automatic resource cleanup.
+     */
     public static async createIsolated(env?: IVuraEnvironment): Promise<DuckDbManager> {
         const mgr = new DuckDbManager();
         mgr.dbPath = ':memory:';
@@ -150,14 +171,20 @@ export class DuckDbManager {
                 existing.filter((r: any) => r.table_type === 'BASE TABLE').map((r: any) => r.table_name)
             );
 
-            const files = await fs.readdir(env.storagePath);
-            for (const file of files) {
-                if ((file.endsWith('.parquet') || file.endsWith('.arrow')) && !file.startsWith('__vura_meta_')) {
-                    const tableName = file.replace(/\.(parquet|arrow)$/, '');
-                    if (!baseTables.has(tableName)) {
-                        const filePath = path.join(env.storagePath, file);
-                        await this.updateView(tableName, filePath);
-                    }
+            const items = await fs.readdir(env.storagePath);
+            for (const item of items) {
+                if (item.startsWith('__vura_meta_') || item.startsWith('staging_')) continue;
+                const fullPath = path.join(env.storagePath, item);
+                const stat = await fs.stat(fullPath);
+                if (stat.isDirectory()) {
+                    const manifestPath = path.join(fullPath, 'manifest.json');
+                    try {
+                        await fs.access(manifestPath);
+                        await this.updateView(item, manifestPath);
+                    } catch {}
+                } else if (item.endsWith('.parquet') || item.endsWith('.arrow')) {
+                    const tableName = item.replace(/\.(parquet|arrow)$/, '');
+                    await this.updateView(tableName, fullPath);
                 }
             }
         } catch { }
@@ -196,12 +223,13 @@ export class DuckDbManager {
     }
 
     public async saveTableArrowIPC(tableName: string, ipcData: Buffer): Promise<void> {
-        if (!ipcData || ipcData.length === 0) return;
-        const parsedTable = arrow.tableFromIPC([ipcData]);
-        const rawRecords = parsedTable.toArray();
-        if (rawRecords.length === 0) return;
+        try {
+            if (!ipcData || ipcData.length === 0) return;
+            const parsedTable = arrow.tableFromIPC([ipcData]);
+            const rawRecords = parsedTable.toArray();
+            if (rawRecords.length === 0) return;
 
-        const schemaMap: Record<string, string> = {};
+            const schemaMap: Record<string, string> = {};
         for (const r of rawRecords) {
             if (r && typeof r === 'object') {
                 for (const [k, v] of Object.entries(r)) {
@@ -216,6 +244,8 @@ export class DuckDbManager {
                             schemaMap[k] = 'BIGINT';
                         } else if (v instanceof Date) {
                             schemaMap[k] = 'TIMESTAMP';
+                        } else if (v instanceof Uint8Array || Buffer.isBuffer(v) || ArrayBuffer.isView(v)) {
+                            schemaMap[k] = 'BLOB';
                         } else {
                             schemaMap[k] = 'VARCHAR';
                         }
@@ -227,16 +257,18 @@ export class DuckDbManager {
         try { await this.runQuery(`DROP VIEW IF EXISTS "${tableName}"`); } catch { }
         try { await this.runQuery(`DROP TABLE IF EXISTS "${tableName}"`); } catch { }
 
-        const colDefs = Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ');
+        const colDefs = Object.entries(schemaMap).length > 0
+            ? Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ')
+            : '"_vura_dummy" VARCHAR';
         await this.runQuery(`CREATE TABLE "${tableName}" (${colDefs})`);
 
         const appender = await this.connection!.createAppender(tableName, 'main');
-        const keys = Object.keys(schemaMap);
+        const keys = Object.keys(schemaMap).length > 0 ? Object.keys(schemaMap) : ['_vura_dummy'];
 
         for (const r of rawRecords) {
             for (const k of keys) {
-                const val = r ? r[k] : null;
-                const type = schemaMap[k];
+                const val = (r && k in r) ? r[k] : null;
+                const type = schemaMap[k] || 'VARCHAR';
                 if (val === null || val === undefined) {
                     appender.appendNull();
                 } else if (type === 'BIGINT') {
@@ -247,6 +279,12 @@ export class DuckDbManager {
                     appender.appendBoolean(Boolean(val));
                 } else if (type === 'TIMESTAMP' && val instanceof Date) {
                     appender.appendVarchar(val.toISOString());
+                } else if (type === 'BLOB') {
+                    if (val === null || val === undefined) {
+                        appender.appendNull();
+                    } else {
+                        appender.appendBlob(new Uint8Array(val));
+                    }
                 } else {
                     appender.appendVarchar(typeof val === 'object' ? JSON.stringify(val) : String(val));
                 }
@@ -255,6 +293,47 @@ export class DuckDbManager {
         }
         appender.flushSync();
         appender.closeSync();
+        } catch (err: any) {
+            throw err;
+        }
+    }
+
+    /** Registers a visual output export table (cell_{cellIndex}_output_pdf / png) in DuckDB and exports to parquet. */
+    public async registerVisualOutputTable(
+        cellIndex: number | string,
+        exportType: 'pdf' | 'png',
+        filePath: string,
+        storagePath?: string
+    ): Promise<string> {
+        let cellIdentifier: string;
+        if (typeof cellIndex === 'number') {
+            cellIdentifier = `cell_${cellIndex + 1}`;
+        } else if (cellIndex.startsWith('cell_')) {
+            cellIdentifier = cellIndex;
+        } else {
+            cellIdentifier = `cell_${cellIndex}`;
+        }
+
+        const tableName = `${cellIdentifier}_output_${exportType}`;
+        const safePath = filePath.replace(/\\/g, '/');
+
+        try { await this.runQuery(`DROP VIEW IF EXISTS "${tableName}"`); } catch {}
+        try { await this.runQuery(`DROP TABLE IF EXISTS "${tableName}"`); } catch {}
+
+        await this.runQuery(`CREATE TABLE "${tableName}" (path VARCHAR, cell_index VARCHAR, export_type VARCHAR, created_at VARCHAR)`);
+        await this.runQuery(
+            `INSERT INTO "${tableName}" VALUES (?, ?, ?, ?)`,
+            [safePath, cellIdentifier, exportType, new Date().toISOString()]
+        );
+
+        if (storagePath) {
+            try {
+                await fs.mkdir(storagePath, { recursive: true });
+                await this.exportTableToParquet(tableName, storagePath);
+            } catch {}
+        }
+
+        return tableName;
     }
 
     /** Export a DuckDB table to a parquet file so Python and Node.js sidecars can read it. */
@@ -280,13 +359,36 @@ export class DuckDbManager {
     }
 
     public async updateView(viewName: string, filePath: string): Promise<void> {
-        const safePath = filePath.replace(/\\/g, '/');
-        const readQuery = filePath.endsWith('.arrow')
-            ? `read_ipc('${safePath}')`
-            : `read_parquet('${safePath}')`;
-        try { await this.runQuery(`DROP TABLE IF EXISTS "${viewName}";`); } catch {}
-        const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM ${readQuery};`;
-        await this.runQuery(sql);
+        const promise = this.updateViewChain.then(() => this.doUpdateView(viewName, filePath));
+        this.updateViewChain = promise.catch(() => {});
+        return promise;
+    }
+
+    private async doUpdateView(viewName: string, filePath: string): Promise<void> {
+        try {
+            const safePath = filePath.replace(/\\/g, '/');
+            try { await this.runQuery(`DROP VIEW IF EXISTS "${viewName}";`); } catch {}
+            try { await this.runQuery(`DROP TABLE IF EXISTS "${viewName}";`); } catch {}
+
+            if (filePath.endsWith('manifest.json') || filePath.endsWith('/manifest.json')) {
+                const dirPath = path.dirname(filePath).replace(/\\/g, '/');
+                const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM read_parquet('${dirPath}/*.parquet', union_by_name=true);`;
+                await this.runQuery(sql);
+                return;
+            }
+
+            if (filePath.endsWith('.arrow')) {
+                const buf = await fs.readFile(filePath);
+                await this.saveTableArrowIPC(viewName, buf);
+                return;
+            }
+
+            const sql = `CREATE OR REPLACE VIEW "${viewName}" AS SELECT * FROM read_parquet('${safePath}');`;
+            await this.runQuery(sql);
+        } catch (err: any) {
+            console.error(`Error in doUpdateView for ${viewName}:`, err);
+            throw err;
+        }
     }
 
     public async dropView(viewName: string): Promise<void> {

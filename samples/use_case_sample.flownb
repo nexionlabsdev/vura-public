@@ -179,7 +179,7 @@ cells:
       -- Step 4: Sync the processed accounts back to the D365 mock server via
       the external Add-on
 
-      !sync_dataverse --source processed_accounts --target accounts --mode
+      !dataverse.sync --source processed_accounts --target accounts --mode
       upsert
     metadata: {}
   - kind: 2
@@ -255,4 +255,4 @@ cells:
         notebookRunGroups:
           groupValue: "2"
 requiredPlugins:
-  - "@vura-data-os/vura-dataverse-runner-plugin"
+  - "@vura-data-os/vura-dataverse"

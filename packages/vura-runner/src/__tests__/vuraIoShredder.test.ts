@@ -81,8 +81,10 @@ describe('VURA I/O & Relational DuckDB JSON Shredder', () => {
 
         const tables = await data.tables('orders');
         for (const tbl of tables) {
+            const arrowPath = path.join(tmpDir, `${tbl}.arrow`).replace(/\\/g, '/');
             const parquetPath = path.join(tmpDir, `${tbl}.parquet`).replace(/\\/g, '/');
-            await duckDb.runQuery(`CREATE VIEW "${tbl}" AS SELECT * FROM read_parquet('${parquetPath}')`);
+            const filePath = fs.existsSync(parquetPath) ? parquetPath : arrowPath;
+            await duckDb.updateView(tbl, filePath);
         }
 
         const queryResult = await duckDb.runQuery(`

@@ -106,7 +106,7 @@ export function shredJson(datasetName: string, obj: any): ShredResult {
             _vura_index: index
         };
 
-        if (item && typeof item === 'object') {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
             for (const [key, value] of Object.entries(item)) {
                 if (!meta.field_order.includes(key)) {
                     meta.field_order.push(key);

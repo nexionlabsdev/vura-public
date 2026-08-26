@@ -1,0 +1,52 @@
+{
+  "name": "@vura-data-os/vura-dataverse",
+  "version": "1.0.0",
+  "description": "Unified VURA Microsoft Dataverse connector for CLI and VS Code",
+  "keywords": [
+    "vura",
+    "dataverse",
+    "dynamics-365",
+    "odata",
+    "sync",
+    "vscode-extension"
+  ],
+  "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/vura-dataverse#readme",
+  "license": "AGPL-3.0",
+  "author": "Nexion Labs <info@nexionlabs.dev>",
+  "publisher": "nexionlabs",
+  "engines": {
+    "node": ">=18",
+    "vscode": "^1.80.0"
+  },
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "files": [
+    "out"
+  ],
+  "activationEvents": [
+    "onNotebook:vura-notebook",
+    "onLanguage:vura-terminal",
+    "onLanguage:shellscript"
+  ],
+  "contributes": {
+    "languages": []
+  },
+  "scripts": {
+    "compile": "tsc -b ./",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.16.2",
+    "@vura-data-os/core-sdk": "^1.0.0",
+    "@vura-data-os/vura-odata-sync-core": "^1.0.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^18.19.0",
+    "@types/uuid": "^10.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.9.3"
+  }
+}

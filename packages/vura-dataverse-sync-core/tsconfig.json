@@ -14,5 +14,9 @@
     "composite": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules"],
+  "references": [
+    { "path": "../core-sdk" },
+    { "path": "../vura-odata-sync-core" }
+  ]
 }

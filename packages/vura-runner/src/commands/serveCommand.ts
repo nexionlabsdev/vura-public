@@ -9,6 +9,7 @@ import { DuckDbManager } from '../services/duckDbManager';
 import { sidecarPool } from '../services/sidecarPool';
 import express from 'express';
 import { EventEmitter } from 'events';
+import * as crypto from 'crypto';
 import swaggerUi from 'swagger-ui-express';
 import { generateSwaggerDoc } from './swaggerGenerator';
 import { parseFlownbContent } from '../utils/flownbLoader';
@@ -398,12 +399,23 @@ export async function startServer(port: number, dir: string, envPath?: string, m
     });
 
     app.get('/api/events', (req, res) => {
+        const targetRunId = req.query.runId as string | undefined;
+
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
 
         const listener = (event: { type: string, data: string }) => {
+            if (targetRunId) {
+                try {
+                    const parsed = JSON.parse(event.data);
+                    const eventRunId = parsed.runId || parsed.id;
+                    if (eventRunId !== targetRunId) {
+                        return;
+                    }
+                } catch {}
+            }
             res.write(`event: ${event.type}\n`);
             res.write(`data: ${event.data}\n\n`);
         };
@@ -430,23 +442,23 @@ export async function startServer(port: number, dir: string, envPath?: string, m
 
         const notebookFile = isSingleFile ? path.basename(targetPath) : relPath;
 
-        const runId = Math.random().toString(36).substring(2, 9);
+        const runId = crypto.randomUUID();
         const startTime = Date.now();
+        const isAsync = req.query.async === 'true';
 
         const executeRun = async () => {
             const mark0 = Date.now();
-            broadcastEvent('run_started', { id: runId, flow: notebookFile });
+            broadcastEvent('run_started', { id: runId, runId, flow: notebookFile });
             await logHistoryToDuckDb(env, runId, notebookFile, 'running', null);
             const mark1 = Date.now();
 
             const httpRequestContext = { query: req.query, body: req.body || {}, headers: req.headers, method: req.method };
-            let sessionDuckDb: DuckDbManager | null = null;
             const schemaName = `session_${runId}`;
             const runStoragePath = path.join(env.storagePath, 'runs', runId);
 
             try {
                 await fs.mkdir(runStoragePath, { recursive: true });
-                sessionDuckDb = await DuckDbManager.createIsolated(env);
+                return await DuckDbManager.withIsolated(async (sessionDuckDb) => {
                 const mark2 = Date.now();
 
                 const requestEnv = Object.create(env);
@@ -480,6 +492,15 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                         const cellError = result.error;
                         const cellStatus = result.status;
                         const cellDuration = result.durationMs;
+                        broadcastEvent('cell_completed', {
+                            runId,
+                            flow: notebookFile,
+                            cellIndex: i,
+                            status: cellStatus,
+                            durationMs: cellDuration,
+                            outputs: logger.currentCellOutputs,
+                            error: cellError
+                        });
                         logCellToDuckDb(env, runId, notebookFile, i, cellStatus, cellDuration, JSON.stringify(logger.currentCellLogs), JSON.stringify(logger.currentCellOutputs), cellError).catch(() => {});
                     }
                 }), EXECUTION_TIMEOUT_MS);
@@ -537,22 +558,25 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                 await logHistoryToDuckDb(env, runId, notebookFile, 'success', duration);
             }
 
-            if (finalResponse) {
-                if (finalResponse.$headers) res.set(finalResponse.$headers);
-                const statusCode = execResult.status === 'error' ? 500 : 200;
-                
-                if (finalResponse.$rawBody !== undefined) {
-                    return res.status(statusCode).send(finalResponse.$rawBody);
-                }
-                let body = finalResponse.$body;
-                if (typeof body === 'object') return res.status(statusCode).json(body);
-                else return res.status(statusCode).send(body);
-            }
+            if (!res.headersSent) {
+                if (finalResponse) {
+                    if (finalResponse.$headers) res.set(finalResponse.$headers);
+                    const statusCode = execResult.status === 'error' ? 500 : 200;
 
-            if (execResult.status === 'error') {
-                return res.status(500).json({ error: execResult.error });
+                    if (finalResponse.$rawBody !== undefined) {
+                        return res.status(statusCode).send(finalResponse.$rawBody);
+                    }
+                    let body = finalResponse.$body;
+                    if (typeof body === 'object') return res.status(statusCode).json(body);
+                    else return res.status(statusCode).send(body);
+                }
+
+                if (execResult.status === 'error') {
+                    return res.status(500).json({ error: execResult.error });
+                }
+                return res.json({ success: true, message: 'Flow executed successfully' });
             }
-            return res.json({ success: true, message: 'Flow executed successfully' });
+            }, env);
 
         } catch (err: any) {
             const duration = Date.now() - startTime;
@@ -562,20 +586,22 @@ export async function startServer(port: number, dir: string, envPath?: string, m
             broadcastEvent('run_failed', { runId, flow: notebookFile, error: errMsg });
             await logHistoryToDuckDb(env, runId, notebookFile, 'error', duration);
             
-            return res.status(500).json({ error: errMsg });
-        } finally {
-            if (sessionDuckDb) {
-                await sessionDuckDb.dropSchema(schemaName).catch(() => {});
-                sessionDuckDb.dispose();
+            if (!res.headersSent) {
+                return res.status(500).json({ error: errMsg });
             }
+        } finally {
             try {
                 await fs.rm(runStoragePath, { recursive: true, force: true });
             } catch {}
         }
         };
 
-        // Execute run concurrently with isolated schema session
-        executeRun();
+        if (isAsync) {
+            res.status(202).json({ runId });
+            executeRun();
+        } else {
+            await executeRun();
+        }
     });
 
     return new Promise((resolve) => {
@@ -585,7 +611,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
             console.log(`${colors.brightCyan}🌐 Dashboard available at http://localhost:${port}/${colors.reset}`);
             if (process.stdin.isTTY) {
                 console.log(`\n${colors.bold}${colors.brightCyan}⌨️  Interactive Terminal Controls:${colors.reset}`);
-                console.log(`  ${colors.brightGreen}Ctrl + R (\\x12)${colors.reset}       : Hot reload .flownb definition (keeps warm gRPC sidecars)`);
+                console.log(`  ${colors.brightGreen}Ctrl + R (\\x12)${colors.reset}       : Hot reload .flownb definition (keeps warm sidecars)`);
                 console.log(`  ${colors.brightYellow}Shift + R${colors.reset}             : Full recompilation and sidecar restart`);
                 console.log(`  ${colors.brightRed}Ctrl + C (\\x03)${colors.reset}       : Graceful shutdown\n`);
             }
@@ -624,7 +650,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                     if (str === 'R' || str === 'r') {
                         console.log(`\n${colors.bold}${colors.brightYellow}⚡ [FULL RELOAD] Recompiling notebooks and restarting warm sidecar processes...${colors.reset}`);
                         try {
-                            sidecarPool.disposeAll();
+                            await sidecarPool.disposeAll();
                             activeManifest = await compileTarget(targetPath, envPath, { quiet: true });
                             if (activeManifest) {
                                 await warmSidecars(env, activeManifest);
@@ -641,7 +667,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
 
         // Warm sidecar workers persist across requests (that's the point of the pool) —
         // only reap them on an actual shutdown, not per-request.
-        const shutdown = () => {
+        const shutdown = async () => {
             console.log(`\n${colors.bold}${colors.brightRed}Shutting down VURA API Server...${colors.reset}`);
             try {
                 if (process.stdin.isTTY) {
@@ -649,7 +675,7 @@ export async function startServer(port: number, dir: string, envPath?: string, m
                     process.stdin.pause();
                 }
             } catch {}
-            try { sidecarPool.disposeAll(); } catch {}
+            try { await sidecarPool.disposeAll(); } catch {}
             try { DuckDbManager.disposeAll(); } catch {}
             if (typeof (server as any).closeAllConnections === 'function') {
                 (server as any).closeAllConnections();

@@ -72,7 +72,9 @@ export async function handleTemplatePdfExport(
     htmlContent: string,
     storagePath: string,
     pdfOutputPath: string,
-    browserPath: string
+    browserPath: string,
+    cellIndex?: number | string,
+    duckDb?: any
 ): Promise<void> {
     try {
         // Ensure puppeteer-core is installed in the isolated environment
@@ -100,6 +102,10 @@ export async function handleTemplatePdfExport(
         });
 
         await browser.close();
+
+        if (duckDb && cellIndex !== undefined) {
+            await duckDb.registerVisualOutputTable(cellIndex, 'pdf', pdfOutputPath, storagePath);
+        }
     } catch (err: any) {
         throw new Error(`PDF Export failed: ${err.message}`);
     }
