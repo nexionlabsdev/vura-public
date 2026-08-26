@@ -45,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-LIB_PACKAGES=(core-sdk vura-io vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin)
+LIB_PACKAGES=(core-sdk vura-io vura-dataverse-sync-core vura-runner)
 
 echo "==> Building library packages"
 (cd "$ROOT_DIR" && npm install --no-audit --no-fund)
@@ -88,4 +88,3 @@ fi
 node "$ROOT_DIR/scripts/copy-duckdb-vendor.js"
 
 echo "==> Done: packages/$PKG_NAME/node_modules is ready to build"
-
