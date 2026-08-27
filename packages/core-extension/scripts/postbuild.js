@@ -19,6 +19,16 @@ function copyFilesWithExt(srcDir, destDir, ext) {
 copyFilesWithExt(path.join(pkgRoot, 'src', 'proto'), path.join(pkgRoot, 'out', 'proto'), '.proto');
 copyFilesWithExt(path.join(pkgRoot, 'src', 'assets'), path.join(pkgRoot, 'out', 'assets'), '.js');
 
+// Copy schemas if present in pkgRoot
+const repoSchemas = path.join(pkgRoot, '..', '..', 'schemas');
+const extensionSchemas = path.join(pkgRoot, 'schemas');
+if (fs.existsSync(repoSchemas)) {
+    fs.mkdirSync(extensionSchemas, { recursive: true });
+    for (const file of fs.readdirSync(repoSchemas)) {
+        fs.copyFileSync(path.join(repoSchemas, file), path.join(extensionSchemas, file));
+    }
+}
+
 // Sync vendor binaries (e.g. duckdb.node on windows ARM64)
 try {
     require(path.join(pkgRoot, '..', '..', 'scripts', 'copy-duckdb-vendor.js'));

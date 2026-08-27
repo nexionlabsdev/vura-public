@@ -1,0 +1,46 @@
+name: 100M Benchmark Tier
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0' # Weekly on Sunday at midnight
+
+jobs:
+  benchmark-100m:
+    name: Run 100M Scale Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 hours timeout
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Node dependencies and build workspaces
+        run: |
+          npm install --no-audit --no-fund
+          npm run compile --workspaces
+
+      - name: Install Python benchmark dependencies
+        run: |
+          pip install pandas pyarrow duckdb pytest
+          cd packages/vura-io-py
+          pip install -e .
+
+      - name: Run 100M Benchmark Tier
+        run: |
+          python3 benchmarks/run.py --tier full --headless run
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-100m-results
+          path: benchmarks/results.jsonl

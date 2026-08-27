@@ -882,6 +882,7 @@ if __name__ == '__main__':
     vura_io_module.tables = data.tables
     vura_io_module.save_table = data.put
     vura_io_module.get_table = data.get
+    vura_io_module.count = data.count
     vura_io_module.save_nested = data.pack
     vura_io_module.load_reconstructed = data.unpack
     vura_io_module.flush = data.flush
@@ -899,6 +900,7 @@ if __name__ == '__main__':
     vura_module.tables = data.tables
     vura_module.save_table = data.put
     vura_module.get_table = data.get
+    vura_module.count = data.count
     vura_module.save_nested = data.pack
     vura_module.load_reconstructed = data.unpack
     vura_module.flush = data.flush

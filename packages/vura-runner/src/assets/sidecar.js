@@ -1181,6 +1181,7 @@ async function main() {
         save_table: data.put.bind(data),
         getTable: data.get.bind(data),
         get_table: data.get.bind(data),
+        count: data.count.bind(data),
         saveNested: data.pack.bind(data),
         save_nested: data.pack.bind(data),
         loadReconstructed: data.unpack.bind(data),
