@@ -246,7 +246,9 @@ describe('Core Extension E2E Integration Suite', () => {
             'Executing vura-notebook.setDataverseConnection command must update dataverseConnectionName cell metadata'
         );
 
-        // 4. Test Phase 9 dynamic UI action execution via vura-notebook.executeUIAction command
+        // 4. Test Phase 9 unit-level UI action dispatch (mock provider — does not verify real connector packages, see real-package tests below)
+        // NOTE: This unit-level check tests executeUIAction's generic dispatch logic against a mock provider.
+        // Full integration testing for real connector package activation and UI actions lives in the test below.
         const mockProvider = {
             activate: async () => {},
             getCommands: () => ['!sharepoint.sync'],
@@ -283,6 +285,84 @@ describe('Core Extension E2E Integration Suite', () => {
         assert.ok(
             exportCell.document.getText().includes('!sharepoint.sync --site "https://contoso.sharepoint.com/sites/finance"'),
             'Executing vura-notebook.executeUIAction command must update cell text with connector magic command'
+        );
+    });
+
+    it('Executes real installed connector package UI actions (vura-sharepoint & vura-dataverse) through extension activation and ProviderRegistry', async () => {
+        const { ProviderRegistry } = require('@vura-data-os/core-sdk');
+
+        // 1. Confirm extensions are installed and activate them
+        const spExt = vscode.extensions.getExtension('nexionlabs.vura-sharepoint');
+        assert.ok(spExt, 'vura-sharepoint extension should be installed in VS Code extension host');
+        await spExt.activate();
+
+        const dvExt = vscode.extensions.getExtension('nexionlabs.vura-dataverse');
+        assert.ok(dvExt, 'vura-dataverse extension should be installed in VS Code extension host');
+        await dvExt.activate();
+
+        // 2. Confirm ProviderRegistry includes real providers
+        const spProvider = ProviderRegistry.getInstance().getProvider('sharepoint-provider');
+        const dvProvider = ProviderRegistry.getInstance().getProvider('dataverse-provider');
+        assert.ok(spProvider, 'ProviderRegistry must include sharepoint-provider from real activation');
+        assert.ok(dvProvider, 'ProviderRegistry must include dataverse-provider from real activation');
+
+        const allProviders = ProviderRegistry.getInstance().getAllProviders();
+        assert.ok(allProviders.includes(spProvider!), 'getAllProviders() must genuinely include sharepoint-provider');
+        assert.ok(allProviders.includes(dvProvider!), 'getAllProviders() must genuinely include dataverse-provider');
+
+        // 3. Prepare test notebook document and cell
+        const testNbPath = path.join(tempDir, 'real_pkg_ui_action_test.flownb');
+        const testNbContent = `- kind: 2\n  language: vura-terminal\n  value: "# existing cell content\\n"\n  metadata:\n    tableName: "orders_data"\n`;
+        await fs.writeFile(testNbPath, testNbContent, 'utf8');
+
+        const testUri = vscode.Uri.file(testNbPath);
+        const testDoc = await vscode.workspace.openNotebookDocument(testUri);
+        await vscode.window.showNotebookDocument(testDoc);
+        const testCell = testDoc.cellAt(0);
+
+        // 4. Test real SharePoint UI action execution
+        const spCellObj = { metadata: testCell.metadata, value: testCell.document.getText() };
+        const spActions = (spProvider as any).getUIActions(spCellObj as any);
+        assert.ok(spActions.length > 0, 'Real SharePoint provider must return UI actions');
+        const spSyncPickerAction = spActions.find((a: any) => a.id === 'sharepoint.sync.picker');
+        assert.ok(spSyncPickerAction, 'Real SharePoint provider must have sharepoint.sync.picker action');
+
+        const origShowQuickPick = vscode.window.showQuickPick;
+        (vscode.window as any).showQuickPick = async (items: any[]) => 'Documents';
+
+        try {
+            await vscode.commands.executeCommand('vura-notebook.executeUIAction', spSyncPickerAction, testCell);
+        } finally {
+            (vscode.window as any).showQuickPick = origShowQuickPick;
+        }
+
+        const spCellText = testCell.document.getText();
+        assert.strictEqual(
+            spCellText,
+            '!sharepoint.sync --source orders_data --target "Documents" --mode upsert\n# existing cell content\n',
+            'Executing vura-notebook.executeUIAction on real SharePoint action must insert exact magic command with quickpick choice'
+        );
+
+        // 5. Test real Dataverse UI action execution
+        const dvCellObj = { metadata: testCell.metadata, value: testCell.document.getText() };
+        const dvActions = (dvProvider as any).getUIActions(dvCellObj as any);
+        assert.ok(dvActions.length > 0, 'Real Dataverse provider must return UI actions');
+        const dvSyncPickerAction = dvActions.find((a: any) => a.id === 'dataverse.sync.picker');
+        assert.ok(dvSyncPickerAction, 'Real Dataverse provider must have dataverse.sync.picker action');
+
+        (vscode.window as any).showQuickPick = async (items: any[]) => 'accounts';
+
+        try {
+            await vscode.commands.executeCommand('vura-notebook.executeUIAction', dvSyncPickerAction, testCell);
+        } finally {
+            (vscode.window as any).showQuickPick = origShowQuickPick;
+        }
+
+        const dvCellText = testCell.document.getText();
+        assert.strictEqual(
+            dvCellText,
+            '!dataverse.sync --source orders_data --target "accounts" --mode upsert\n!sharepoint.sync --source orders_data --target "Documents" --mode upsert\n# existing cell content\n',
+            'Executing vura-notebook.executeUIAction on real Dataverse action must insert exact magic command with quickpick choice'
         );
     });
 });

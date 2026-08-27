@@ -5,6 +5,7 @@
   "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/vura-sharepoint#readme",
   "license": "AGPL-3.0",
   "author": "Nexion Labs <info@nexionlabs.dev>",
+  "publisher": "nexionlabs",
   "type": "commonjs",
   "main": "out/index.js",
   "types": "out/index.d.ts",
@@ -12,8 +13,14 @@
     "out"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=18",
+    "vscode": "^1.80.0"
   },
+  "activationEvents": [
+    "onNotebook:vura-notebook",
+    "onLanguage:vura-terminal",
+    "onLanguage:shellscript"
+  ],
   "scripts": {
     "compile": "tsc -b ./",
     "test": "jest"

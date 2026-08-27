@@ -51,7 +51,7 @@ echo "==> Compiling $PKG_NAME"
 (cd "$EXT_DIR" && npm run compile)
 
 echo "==> Packaging"
-PACKAGE_ARGS=(package --no-git-tag-version --skip-license --allow-missing-repository "${VSCE_ARGS[@]+"${VSCE_ARGS[@]}"}")
+PACKAGE_ARGS=(package --no-git-tag-version --skip-license --allow-missing-repository --no-dependencies "${VSCE_ARGS[@]+"${VSCE_ARGS[@]}"}")
 if [[ -n "$OUT_PATH" ]]; then
   mkdir -p "$(dirname "$OUT_PATH")"
   PACKAGE_ARGS+=(-o "$(cd "$(dirname "$OUT_PATH")" && pwd)/$(basename "$OUT_PATH")")
@@ -69,8 +69,16 @@ node -e '
   const fs = require("fs");
   const pkgPath = process.argv[1];
   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  let modified = false;
   if (pkg.name && pkg.name.includes("/")) {
     pkg.name = pkg.name.split("/").pop();
+    modified = true;
+  }
+  if (pkg.files) {
+    delete pkg.files;
+    modified = true;
+  }
+  if (modified) {
     fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   }
 ' "$EXT_DIR/package.json"
