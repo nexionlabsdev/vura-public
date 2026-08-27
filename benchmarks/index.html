@@ -129,69 +129,98 @@
 
                 // Chart 1: Append Scaling
                 const appendRecords = records.filter(r => r.suite === 'append_scaling');
-                const appendLabels = appendRecords.map(r => r.tableRows.toLocaleString());
-                const appendData = appendRecords.map(r => r.durationMs);
+                const pyAppends = appendRecords.filter(r => r.language === 'python');
+                const nodeAppends = appendRecords.filter(r => r.language === 'javascript');
+                const appendRowCounts = Array.from(new Set(appendRecords.map(r => r.tableRows))).sort((a, b) => a - b);
+                const appendLabels = appendRowCounts.map(r => r.toLocaleString());
 
                 new Chart(document.getElementById('appendChart'), {
                     type: 'line',
                     data: {
                         labels: appendLabels,
-                        datasets: [{
-                            label: 'append() Duration (ms)',
-                            data: appendData,
-                            borderColor: '#38bdf8',
-                            backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                            fill: true,
-                            tension: 0.2
-                        }]
-                    },
-                    options: { responsive: true, maintainAspectRatio: false }
-                });
-
-                // Chart 2: Read Latency (object vs arrow)
-                const readRecords = records.filter(r => r.suite === 'read_scaling');
-                const objReads = readRecords.filter(r => r.format === 'object');
-                const arrowReads = readRecords.filter(r => r.format === 'arrow');
-
-                new Chart(document.getElementById('readChart'), {
-                    type: 'bar',
-                    data: {
-                        labels: objReads.map(r => r.tableRows.toLocaleString()),
                         datasets: [
-                            { label: 'object format (ms)', data: objReads.map(r => r.durationMs), backgroundColor: '#f43f5e' },
-                            { label: 'arrow format (ms)', data: arrowReads.map(r => r.durationMs), backgroundColor: '#10b981' }
+                            {
+                                label: 'Python append() (ms)',
+                                data: appendRowCounts.map(rows => pyAppends.find(r => r.tableRows === rows)?.durationMs ?? null),
+                                borderColor: '#38bdf8',
+                                backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                                fill: false,
+                                tension: 0.2
+                            },
+                            {
+                                label: 'Node append() (ms)',
+                                data: appendRowCounts.map(rows => nodeAppends.find(r => r.tableRows === rows)?.durationMs ?? null),
+                                borderColor: '#34d399',
+                                backgroundColor: 'rgba(52, 211, 153, 0.1)',
+                                fill: false,
+                                tension: 0.2
+                            }
                         ]
                     },
                     options: { responsive: true, maintainAspectRatio: false }
                 });
 
-                // Chart 3: Memory RSS
-                const memData = records.map(r => r.rssMemMB);
-                new Chart(document.getElementById('memoryChart'), {
-                    type: 'line',
+                // Chart 2: Read Latency (object vs arrow across languages)
+                const readRecords = records.filter(r => r.suite === 'read_scaling');
+                const readRowCounts = Array.from(new Set(readRecords.map(r => r.tableRows))).sort((a, b) => a - b);
+                const readLabels = readRowCounts.map(r => r.toLocaleString());
+
+                const getReadData = (lang, fmt) => readRowCounts.map(rows => {
+                    const found = readRecords.find(r => (r.language === lang || (lang === 'python' && !r.language)) && r.format === fmt && r.tableRows === rows);
+                    return found ? found.durationMs : null;
+                });
+
+                new Chart(document.getElementById('readChart'), {
+                    type: 'bar',
                     data: {
-                        labels: records.map((_, i) => `#${i + 1}`),
-                        datasets: [{
-                            label: 'Process RSS Memory (MB)',
-                            data: memData,
-                            borderColor: '#a855f7',
-                            tension: 0.2
-                        }]
+                        labels: readLabels,
+                        datasets: [
+                            { label: 'Python (object)', data: getReadData('python', 'object'), backgroundColor: '#38bdf8' },
+                            { label: 'Python (arrow)', data: getReadData('python', 'arrow'), backgroundColor: '#0284c7' },
+                            { label: 'Node (object)', data: getReadData('javascript', 'object'), backgroundColor: '#f43f5e' },
+                            { label: 'Node (arrow)', data: getReadData('javascript', 'arrow'), backgroundColor: '#10b981' }
+                        ]
                     },
                     options: { responsive: true, maintainAspectRatio: false }
                 });
 
-                // Chart 4: Format Comparison
+                // Chart 3: Memory RSS Usage vs Table Size (Read Scaling)
+                const getReadRssData = (lang, fmt) => readRowCounts.map(rows => {
+                    const found = readRecords.find(r => (r.language === lang || (lang === 'python' && !r.language)) && r.format === fmt && r.tableRows === rows);
+                    return found ? found.rssMemMB : null;
+                });
+
+                new Chart(document.getElementById('memoryChart'), {
+                    type: 'line',
+                    data: {
+                        labels: readLabels,
+                        datasets: [
+                            { label: 'Python (object) RSS', data: getReadRssData('python', 'object'), borderColor: '#38bdf8', backgroundColor: '#38bdf8', tension: 0.2 },
+                            { label: 'Python (arrow) RSS', data: getReadRssData('python', 'arrow'), borderColor: '#0284c7', backgroundColor: '#0284c7', borderDash: [5, 5], tension: 0.2 },
+                            { label: 'Node (object) RSS', data: getReadRssData('javascript', 'object'), borderColor: '#f43f5e', backgroundColor: '#f43f5e', tension: 0.2 },
+                            { label: 'Node (arrow) RSS', data: getReadRssData('javascript', 'arrow'), borderColor: '#10b981', backgroundColor: '#10b981', borderDash: [5, 5], tension: 0.2 }
+                        ]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                // Chart 4: Format Performance Comparison
+                const sumDurations = (lang, fmt) => readRecords
+                    .filter(r => (r.language === lang || (lang === 'python' && !r.language)) && r.format === fmt)
+                    .reduce((a, b) => a + b.durationMs, 0);
+
                 new Chart(document.getElementById('formatChart'), {
                     type: 'doughnut',
                     data: {
-                        labels: ['object', 'arrow'],
+                        labels: ['Python (object)', 'Python (arrow)', 'Node (object)', 'Node (arrow)'],
                         datasets: [{
                             data: [
-                                objReads.reduce((a, b) => a + b.durationMs, 0),
-                                arrowReads.reduce((a, b) => a + b.durationMs, 0)
+                                sumDurations('python', 'object'),
+                                sumDurations('python', 'arrow'),
+                                sumDurations('javascript', 'object'),
+                                sumDurations('javascript', 'arrow')
                             ],
-                            backgroundColor: ['#f43f5e', '#10b981']
+                            backgroundColor: ['#38bdf8', '#0284c7', '#f43f5e', '#10b981']
                         }]
                     },
                     options: { responsive: true, maintainAspectRatio: false }

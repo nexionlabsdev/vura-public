@@ -217,37 +217,87 @@ if (!info) {{
             node_client.close()
             shutil.rmtree(temp_dir_node, ignore_errors=True)
 
-        # Suite 2: read_scaling (stream) - object vs arrow
-        print(" -> Suite 2: stream() latency and RSS memory (object vs arrow)")
-        temp_dir_s2 = tempfile.mkdtemp(prefix="vura_bench_s2_")
-        py_client_s2 = SidecarClient([python_bin, "-u", py_sidecar_script, "--serve"], repo_root, temp_dir_s2)
+        # Suite 2: read_scaling (stream) - object vs arrow (Python & Node)
+        print(" -> Suite 2: stream() latency and RSS memory (object vs arrow - Python & Node)")
+        s2_checkpoints = [r for r in self.checkpoints if r <= 1_000_000]
+
+        # 2a. Python sidecar worker for Suite 2
+        temp_dir_s2_py = tempfile.mkdtemp(prefix="vura_bench_s2_py_")
+        py_client_s2 = SidecarClient([python_bin, "-u", py_sidecar_script, "--serve"], repo_root, temp_dir_s2_py)
         try:
-            for rows in [10_000, 50_000, 100_000]:
-                if rows in self.checkpoints:
-                    # Seed dataset
-                    seed_code = f"data.put('bench_stream_test', [{{\"id\": i, \"val\": i * 1.5}} for i in range({rows})])"
-                    py_client_s2.execute_code(seed_code)
+            for rows in s2_checkpoints:
+                # Seed dataset
+                seed_code = f"data.put('bench_stream_test', [{{\"id\": i, \"val\": i * 1.5}} for i in range({rows})])"
+                py_client_s2.execute_code(seed_code)
 
-                    # Test format: dict (object)
-                    stream_obj_code = f"batches = list(data.stream('bench_stream_test', batch_size={rows}, format='dict'))"
-                    start_t = time.time()
-                    res_obj = py_client_s2.execute_code(stream_obj_code)
-                    dur_obj = (time.time() - start_t) * 1000.0
-                    if res_obj.get("status") == "ok":
-                        self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_obj, {"format": "object"})
+                # Test format: dict (object)
+                stream_obj_code = f"batches = list(data.stream('bench_stream_test', batch_size={rows}, format='dict'))"
+                start_t = time.time()
+                res_obj = py_client_s2.execute_code(stream_obj_code)
+                dur_obj = (time.time() - start_t) * 1000.0
+                if res_obj.get("status") == "ok":
+                    self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_obj, {"format": "object"})
 
-                    # Test format: arrow
-                    stream_arrow_code = f"batches = list(data.stream('bench_stream_test', batch_size={rows}, format='arrow'))"
-                    start_t = time.time()
-                    res_arrow = py_client_s2.execute_code(stream_arrow_code)
-                    dur_arrow = (time.time() - start_t) * 1000.0
-                    if res_arrow.get("status") == "ok":
-                        self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_arrow, {"format": "arrow"})
+                # Test format: arrow
+                stream_arrow_code = f"""import pyarrow as pa
+batches = list(data.stream('bench_stream_test', batch_size={rows}, format='arrow'))
+verified = len(batches) > 0 and all(isinstance(b, (pa.RecordBatch, pa.Table)) for b in batches)
+print(f"VERIFIED_ARROW:{{verified}}")
+"""
+                start_t = time.time()
+                res_arrow = py_client_s2.execute_code(stream_arrow_code)
+                dur_arrow = (time.time() - start_t) * 1000.0
+                if res_arrow.get("status") == "ok":
+                    arrow_verified = "VERIFIED_ARROW:True" in res_arrow.get("stdout", "")
+                    if not arrow_verified:
+                        sys.stderr.write(f"Warning: Python Arrow batch verification failed for {rows} rows\n")
+                    self.log_measurement("read_scaling", "stream", rows, rows, "python", dur_arrow, {"format": "arrow", "arrowVerified": arrow_verified})
+                print(f"    [Python Stream] Target {rows:,} rows reached. Current RSS: {self._get_process_rss_mb()} MB")
         except Exception as e:
             print(f"    [!] Error in Suite 2 Python: {e}")
         finally:
             py_client_s2.close()
-            shutil.rmtree(temp_dir_s2, ignore_errors=True)
+            shutil.rmtree(temp_dir_s2_py, ignore_errors=True)
+
+        # 2b. Node sidecar worker for Suite 2
+        temp_dir_s2_node = tempfile.mkdtemp(prefix="vura_bench_s2_node_")
+        node_client_s2 = SidecarClient([node_bin, node_sidecar_script, "--serve"], repo_root, temp_dir_s2_node, {"NODE_PATH": node_path_str})
+        try:
+            for rows in s2_checkpoints:
+                # Seed dataset using vura put
+                seed_code = f"const {{ put }} = require('vura'); await put('bench_stream_test', Array.from({{length: {rows}}}, (_, i) => ({{id: i, val: i * 1.5}})));"
+                node_client_s2.execute_code(seed_code)
+
+                # Test format: object
+                stream_obj_code = f"const {{ stream }} = require('vura'); const batches = []; for await (const b of stream('bench_stream_test', {{batchSize: {rows}, format: 'object'}})) batches.push(b);"
+                start_t = time.time()
+                res_obj = node_client_s2.execute_code(stream_obj_code)
+                dur_obj = (time.time() - start_t) * 1000.0
+                if res_obj.get("status") == "ok":
+                    self.log_measurement("read_scaling", "stream", rows, rows, "javascript", dur_obj, {"format": "object"})
+
+                # Test format: arrow
+                stream_arrow_code = f"""const {{ stream }} = require('vura');
+const batches = [];
+for await (const b of stream('bench_stream_test', {{batchSize: {rows}, format: 'arrow'}})) batches.push(b);
+const looksArrow = (b) => b && typeof b === 'object' && (typeof b.numRows === 'number' || (b.schema && typeof b.schema === 'object'));
+const verified = batches.length > 0 && batches.every(looksArrow);
+console.log('VERIFIED_ARROW:' + verified);
+"""
+                start_t = time.time()
+                res_arrow = node_client_s2.execute_code(stream_arrow_code)
+                dur_arrow = (time.time() - start_t) * 1000.0
+                if res_arrow.get("status") == "ok":
+                    arrow_verified = "VERIFIED_ARROW:true" in res_arrow.get("stdout", "")
+                    if not arrow_verified:
+                        sys.stderr.write(f"Warning: Node Arrow batch verification failed for {rows} rows\n")
+                    self.log_measurement("read_scaling", "stream", rows, rows, "javascript", dur_arrow, {"format": "arrow", "arrowVerified": arrow_verified})
+                print(f"    [Node Stream] Target {rows:,} rows reached. Current RSS: {self._get_process_rss_mb()} MB")
+        except Exception as e:
+            print(f"    [!] Error in Suite 2 Node: {e}")
+        finally:
+            node_client_s2.close()
+            shutil.rmtree(temp_dir_s2_node, ignore_errors=True)
 
         print(" ✓ Benchmark suite completed successfully.")
 
