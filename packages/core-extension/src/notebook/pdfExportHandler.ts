@@ -16,20 +16,12 @@ export async function handleGraphPdfExport(
 
     if (!uri) return;
 
-    vscode.window.withProgress({
+    await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Exporting graph to PDF...`,
         cancellable: false
     }, async (progress) => {
         try {
-            // Check for puppeteer-core in the isolated environment
-            const isolatedNodeModules = path.join(storagePath, 'node_modules', 'puppeteer-core');
-            if (!fs.existsSync(isolatedNodeModules)) {
-                progress.report({ message: 'Installing puppeteer-core (first time only)...' });
-                const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-                spawnSync(npmCmd, ['install', 'puppeteer-core'], { cwd: storagePath });
-            }
-
             // Resolve browser path (auto-detect → prompt user → save to settings)
             const browserPath = await resolveBrowserPath();
             if (!browserPath) {
@@ -39,18 +31,31 @@ export async function handleGraphPdfExport(
 
             progress.report({ message: 'Rendering PDF...' });
 
-            // Require puppeteer-core from the isolated environment
-            const puppeteer = require(path.join(storagePath, 'node_modules', 'puppeteer-core'));
+            let puppeteer: any;
+            const extNodeModules = path.join(context.extensionPath, 'node_modules', 'puppeteer-core');
+            const isolatedNodeModules = path.join(storagePath, 'node_modules', 'puppeteer-core');
+
+            if (fs.existsSync(extNodeModules)) {
+                puppeteer = require(extNodeModules);
+            } else if (fs.existsSync(isolatedNodeModules)) {
+                puppeteer = require(isolatedNodeModules);
+            } else {
+                puppeteer = require('puppeteer-core');
+            }
+
+            const cleanEnv = { ...process.env };
+            delete cleanEnv.ELECTRON_RUN_AS_NODE;
+            delete cleanEnv.ELECTRON_NO_ATTACH_CONSOLE;
 
             const browser = await puppeteer.launch({
                 executablePath: browserPath,
-                headless: "new"
+                headless: 'new',
+                env: cleanEnv,
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
             });
 
             const page = await browser.newPage();
-
-            // Wait for network idle to ensure vega-lite finishes rendering
-            await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
+            await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' });
 
             await page.pdf({
                 path: uri.fsPath,
@@ -59,11 +64,6 @@ export async function handleGraphPdfExport(
             });
 
             await browser.close();
-
-            const action = await vscode.window.showInformationMessage(`PDF Export successful: ${uri.fsPath}`, 'Open PDF');
-            if (action === 'Open PDF') {
-                vscode.env.openExternal(uri);
-            }
         } catch (err: any) {
             vscode.window.showErrorMessage(`PDF Export failed: ${err.message}`);
         }

@@ -135,7 +135,8 @@ export async function handleVisualExport(
 
             const browser = await puppeteer.launch({
                 executablePath: browserPath || undefined,
-                headless: 'new'
+                headless: 'new',
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
             });
 
             const page = await browser.newPage();

@@ -603,7 +603,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
     }));
 
     context.subscriptions.push(safeRegisterCommand('vura-notebook.exportGraphPdf', async (cell: vscode.NotebookCell) => {
-        const storagePath = context.storageUri?.fsPath;
+        const storagePath = context.storageUri?.fsPath || context.globalStorageUri?.fsPath || require('os').tmpdir();
         if (!storagePath) return;
 
         let htmlContent = '';
@@ -818,7 +818,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
     }));
 
     context.subscriptions.push(safeRegisterCommand('vura-notebook.exportTemplatePdf', async (cell: vscode.NotebookCell) => {
-        const storagePath = context.storageUri?.fsPath;
+        const storagePath = context.storageUri?.fsPath || context.globalStorageUri?.fsPath || require('os').tmpdir();
         if (!storagePath) return;
 
         let htmlContent = '';
@@ -939,7 +939,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
     }));
 
     context.subscriptions.push(safeRegisterCommand('vura-notebook.exportVegaGraphPdf', async (cell: vscode.NotebookCell) => {
-        const storagePath = context.storageUri?.fsPath;
+        const storagePath = context.storageUri?.fsPath || context.globalStorageUri?.fsPath || require('os').tmpdir();
         if (!storagePath) return;
 
         let htmlContent = '';

@@ -1,5 +1,6 @@
 export * from './interfaces';
 export * from './runner';
+export * from './services/sidecarPool';
 export * from './cliEnvironment';
 export * from './services/contextManager';
 export * from './services/duckDbManager';
