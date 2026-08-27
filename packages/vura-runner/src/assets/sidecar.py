@@ -238,7 +238,17 @@ class DataManager:
             payload["partitioned"] = True
         print(json.dumps(payload), file=sys.stderr)
 
+    def _check_test_pause_hook(self):
+        if os.environ.get("VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE"):
+            import time
+            out_stream = sys.__stderr__ if sys.__stderr__ is not None else sys.stderr
+            out_stream.write("[VURA_TEST_HOOK] PAUSED_BEFORE_MANIFEST_WRITE\n")
+            out_stream.flush()
+            while True:
+                time.sleep(0.1)
+
     def _save_manifest_atomically(self, table_name, manifest):
+        self._check_test_pause_hook()
         dir_path = os.path.join(self.current_storage_path, table_name)
         os.makedirs(dir_path, exist_ok=True)
         manifest_path = os.path.join(dir_path, 'manifest.json')

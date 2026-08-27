@@ -83,5 +83,30 @@ class TestPartitioningContractPy(unittest.TestCase):
         self.assertTrue(len(batches) > 0)
         self.assertIsInstance(batches[0], pa.RecordBatch)
 
+    def test_isolated_atomic_rename_failure(self):
+        initial_manifest = {"version": 1, "tableName": "rename_tbl", "rowCount": 10, "parts": [{"file": "part-0000.parquet", "rowCount": 10}]}
+        self.data_mgr._save_manifest_atomically("rename_tbl", initial_manifest)
+
+        manifest_file = os.path.join(self.tmp_dir, "rename_tbl", "manifest.json")
+        self.assertTrue(os.path.exists(manifest_file))
+
+        updated_manifest = {"version": 1, "tableName": "rename_tbl", "rowCount": 20, "parts": [{"file": "part-0000.parquet", "rowCount": 10}, {"file": "part-0001.parquet", "rowCount": 10}]}
+
+        orig_replace = os.replace
+        def mock_replace(src, dst):
+            raise OSError("Simulated atomic rename I/O failure")
+
+        try:
+            os.replace = mock_replace
+            with self.assertRaises(OSError):
+                self.data_mgr._save_manifest_atomically("rename_tbl", updated_manifest)
+        finally:
+            os.replace = orig_replace
+
+        with open(manifest_file, "r", encoding="utf-8") as f:
+            saved_manifest = json.load(f)
+        self.assertEqual(saved_manifest["rowCount"], 10)
+        self.assertEqual(len(saved_manifest["parts"]), 1)
+
 if __name__ == "__main__":
     unittest.main()

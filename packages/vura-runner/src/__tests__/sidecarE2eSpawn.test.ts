@@ -130,36 +130,102 @@ save_table("blob_tbl", [{"id": 1, "data": data}])
         sidecarPool.release(poolKey, worker);
     });
 
-    test('Crash-simulation: kill sidecar after writing part file before manifest update', async () => {
-        const poolKey = 'test_crash_key';
-        const worker = await sidecarPool.acquire(poolKey, () => spawn('python3', [pythonSidecar, '--serve'], {
-            env: { ...process.env, VURA_STORAGE_PATH: tempDir, PYTHONPATH: pythonPath },
-            stdio: ['pipe', 'pipe', 'inherit']
-        }));
+    test.each([
+        ['Python sidecar', (pauseEnv: boolean) => spawn('python3', [pythonSidecar, '--serve'], {
+            env: {
+                ...process.env,
+                VURA_STORAGE_PATH: tempDir,
+                VURA_PARTITION_THRESHOLD_ROWS: '10',
+                PYTHONPATH: pythonPath,
+                ...(pauseEnv ? { VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE: '1' } : {})
+            },
+            stdio: ['pipe', 'pipe', 'pipe']
+        })],
+        ['JavaScript sidecar', (pauseEnv: boolean) => spawn('node', [jsSidecar, '--serve'], {
+            env: {
+                ...process.env,
+                VURA_STORAGE_PATH: tempDir,
+                VURA_PARTITION_THRESHOLD_ROWS: '10',
+                ...(pauseEnv ? { VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE: '1' } : {})
+            },
+            stdio: ['pipe', 'pipe', 'pipe']
+        })],
+    ])('%s: deterministic SIGKILL mid-flush test via VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE', async (name, spawnFn) => {
+        // Step 1: Initial write (10 rows, creates partitioned table part-0000.parquet & manifest.json)
+        const proc1 = spawnFn(false);
+        const code1 = name.includes('Python')
+            ? `from vura.io import save_table\nsave_table("crash_tbl", [{"id": j} for j in range(10)])\n`
+            : `const { save_table } = require('vura');\nsave_table("crash_tbl", Array.from({ length: 10 }, (_, j) => ({ id: j })));\n`;
 
-        // Initial write of 10 rows
-        const initCode = `
-from vura.io import save_table
-save_table("crash_tbl", [{"id": j} for j in range(10)])
-`;
-        const resInit = await sidecarPool.send(worker, { id: 'init_req', code: initCode, ctx: { storagePath: tempDir } });
-        expect(resInit.status).toBe('ok');
+        proc1.stdin.write(JSON.stringify({ id: 'req_init', code: code1, ctx: { storagePath: tempDir } }) + '\n');
+        await new Promise<void>((resolve, reject) => {
+            proc1.stdout.once('data', (d) => {
+                const res = JSON.parse(d.toString());
+                if (res.status === 'ok') resolve();
+                else reject(new Error(res.error || 'req_init failed'));
+            });
+        });
 
-        // Verify initial table exists
-        const initialFile = path.join(tempDir, 'crash_tbl.arrow');
-        const initStat = await fs.stat(initialFile);
-        expect(initStat.isFile()).toBe(true);
+        const manifestPath = path.join(tempDir, 'crash_tbl', 'manifest.json');
+        const manifest1 = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+        expect(manifest1.rowCount).toBe(10);
+        expect(manifest1.parts.length).toBe(1);
 
-        // Simulate crash during partial write to crash_tbl directory
-        const partDir = path.join(tempDir, 'crash_tbl');
-        await fs.mkdir(partDir, { recursive: true });
-        await fs.writeFile(path.join(partDir, 'part_99.arrow'), Buffer.from('corrupted data'));
+        proc1.kill();
 
-        // Kill worker process
-        worker.proc.kill('SIGKILL');
+        // Step 2: Spawn process with VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE=1 and attempt append of 10 rows
+        const proc2 = spawnFn(true);
+        let sentinelSeen = false;
 
-        // Confirm original pre-flush file remains intact and uncorrupted
-        const finalStat = await fs.stat(initialFile);
-        expect(finalStat.size).toBe(initStat.size);
+        const sentinelPromise = new Promise<void>((resolve) => {
+            const checkChunk = (chunk: any) => {
+                if (chunk.toString().includes('[VURA_TEST_HOOK] PAUSED_BEFORE_MANIFEST_WRITE')) {
+                    sentinelSeen = true;
+                    resolve();
+                }
+            };
+            proc2.stderr.on('data', checkChunk);
+            proc2.stdout.on('data', checkChunk);
+        });
+
+        const code2 = name.includes('Python')
+            ? `from vura.io import append\nappend("crash_tbl", [{"id": j + 10} for j in range(10)])\n`
+            : `const { append } = require('vura');\nawait append("crash_tbl", Array.from({ length: 10 }, (_, j) => ({ id: j + 10 })));\n`;
+
+        proc2.stdin.write(JSON.stringify({ id: 'req_append', code: code2, ctx: { storagePath: tempDir } }) + '\n');
+
+        // Wait for sentinel on stderr indicating part-0001.parquet was written and sidecar is paused right before manifest update
+        await sentinelPromise;
+        expect(sentinelSeen).toBe(true);
+
+        // Verify part-0001.parquet exists on disk before SIGKILL
+        const part1Path = path.join(tempDir, 'crash_tbl', 'part-0001.parquet');
+        const part1Exists = await fs.stat(part1Path).then(s => s.isFile()).catch(() => false);
+        expect(part1Exists).toBe(true);
+
+        // Send hard SIGKILL to process paused right before manifest update
+        proc2.kill('SIGKILL');
+
+        // Step 3: Spawn fresh sidecar without pause hook and read crash_tbl count
+        const proc3 = spawnFn(false);
+        const code3 = name.includes('Python')
+            ? `from vura.io import count\nprint(f"COUNT:{count('crash_tbl')}")\n`
+            : `const { count } = require('vura');\nconsole.log(\`COUNT:\${await count('crash_tbl')}\`);\n`;
+
+        proc3.stdin.write(JSON.stringify({ id: 'req_read', code: code3, ctx: { storagePath: tempDir } }) + '\n');
+        const readRes = await new Promise<any>((resolve) => {
+            proc3.stdout.once('data', (d) => {
+                resolve(JSON.parse(d.toString()));
+            });
+        });
+        proc3.kill();
+
+        expect(readRes.status).toBe('ok');
+        const match = readRes.stdout.match(/COUNT:(\d+)/);
+        expect(match).not.toBeNull();
+        const readCount = parseInt(match[1], 10);
+
+        // Assert table count reflects last-known-good manifest state (10 rows, not 20)
+        expect(readCount).toBe(10);
     });
 });
