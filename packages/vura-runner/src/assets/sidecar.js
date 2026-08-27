@@ -1198,6 +1198,7 @@ async function main() {
         flush: data.flush.bind(data),
         flushAll: data.flushAll.bind(data),
         append: data.append.bind(data),
+        stream: data.stream.bind(data),
     };
     ioModule.io = ioModule;
     ioModule.default = ioModule;
