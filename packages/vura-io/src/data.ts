@@ -492,6 +492,12 @@ export class DataManager {
         if (tableInfo.format === 'arrow') {
             const buffer = await fs.promises.readFile(tableInfo.filePath);
             const table = arrow.tableFromIPC(buffer);
+            if (options?.format === 'arrow') {
+                for (let offset = 0; offset < total; offset += batchSize) {
+                    yield table.slice(offset, Math.min(offset + batchSize, total)) as any;
+                }
+                return;
+            }
             const rawRows = table.toArray();
             const colNames = table.schema.fields.map(f => f.name);
             for (let offset = 0; offset < total; offset += batchSize) {
@@ -503,11 +509,7 @@ export class DataManager {
                     }
                     return obj;
                 });
-                if (options?.format === 'arrow') {
-                    yield arrow.tableFromJSON(chunk) as any;
-                } else {
-                    yield chunk;
-                }
+                yield chunk;
             }
             return;
         }
@@ -524,24 +526,28 @@ export class DataManager {
             const query = `SELECT * FROM ${readFunc} LIMIT ${batchSize} OFFSET ${offset}`;
             const reader = await conn.runAndReadAll(query);
 
-            const colNames = reader.columnNames();
-            const rows = reader.getRows();
-            const numCols = colNames.length;
-            const chunk = new Array(rows.length);
-
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                const obj: Record<string, any> = {};
-                for (let j = 0; j < numCols; j++) {
-                    const val = row[j];
-                    obj[colNames[j]] = val === null || val === undefined ? null : normalizeValue(val);
-                }
-                chunk[i] = obj;
-            }
-
             if (options?.format === 'arrow') {
-                yield arrow.tableFromJSON(chunk) as any;
+                const colsObj = reader.getColumnsObject();
+                const vecs: Record<string, any> = {};
+                for (const [k, v] of Object.entries(colsObj)) {
+                    vecs[k] = arrow.vectorFromArray(v as any);
+                }
+                yield new arrow.Table(vecs) as any;
             } else {
+                const colNames = reader.columnNames();
+                const rows = reader.getRows();
+                const numCols = colNames.length;
+                const chunk = new Array(rows.length);
+
+                for (let i = 0; i < rows.length; i++) {
+                    const row = rows[i];
+                    const obj: Record<string, any> = {};
+                    for (let j = 0; j < numCols; j++) {
+                        const val = row[j];
+                        obj[colNames[j]] = val === null || val === undefined ? null : normalizeValue(val);
+                    }
+                    chunk[i] = obj;
+                }
                 yield chunk;
             }
         }

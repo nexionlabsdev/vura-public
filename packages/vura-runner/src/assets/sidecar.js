@@ -740,6 +740,12 @@ class DataManager {
         if (tableInfo.format === 'arrow') {
             const buffer = await fs.promises.readFile(tableInfo.filePath);
             const table = arrow.tableFromIPC(buffer);
+            if (options && options.format === 'arrow') {
+                for (let offset = 0; offset < total; offset += batchSize) {
+                    yield table.slice(offset, Math.min(offset + batchSize, total));
+                }
+                return;
+            }
             const rawRows = table.toArray();
             const colNames = table.schema.fields.map(f => f.name);
             for (let offset = 0; offset < total; offset += batchSize) {
@@ -751,11 +757,7 @@ class DataManager {
                     }
                     return obj;
                 });
-                if (options && options.format === 'arrow') {
-                    yield arrow.tableFromJSON(chunk);
-                } else {
-                    yield chunk;
-                }
+                yield chunk;
             }
             return;
         }
@@ -772,33 +774,37 @@ class DataManager {
             const query = `SELECT * FROM ${readFunc} LIMIT ${batchSize} OFFSET ${offset}`;
             const reader = await conn.runAndReadAll(query);
 
-            const colNames = reader.columnNames();
-            const colTypes = reader.columnTypes ? reader.columnTypes() : [];
-            const rows = reader.getRows();
-            const numCols = colNames.length;
-            const chunk = new Array(rows.length);
-
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                const obj = {};
-                for (let j = 0; j < numCols; j++) {
-                    const val = row[j];
-                    const cTypeStr = colTypes[j] ? colTypes[j].toString() : '';
-                    if (val === null || val === undefined) {
-                        obj[colNames[j]] = null;
-                    } else if (cTypeStr === 'BLOB' || (val && val.constructor && val.constructor.name === 'DuckDBBlobValue')) {
-                        const rawBytes = val.bytes ? val.bytes : val;
-                        obj[colNames[j]] = Buffer.isBuffer(rawBytes) ? rawBytes : Buffer.from(rawBytes);
-                    } else {
-                        obj[colNames[j]] = normalizeValue(val);
-                    }
-                }
-                chunk[i] = obj;
-            }
-
             if (options && options.format === 'arrow') {
-                yield arrow.tableFromJSON(chunk);
+                const colsObj = reader.getColumnsObject();
+                const vecs = {};
+                for (const [k, v] of Object.entries(colsObj)) {
+                    vecs[k] = arrow.vectorFromArray(v);
+                }
+                yield new arrow.Table(vecs);
             } else {
+                const colNames = reader.columnNames();
+                const colTypes = reader.columnTypes ? reader.columnTypes() : [];
+                const rows = reader.getRows();
+                const numCols = colNames.length;
+                const chunk = new Array(rows.length);
+
+                for (let i = 0; i < rows.length; i++) {
+                    const row = rows[i];
+                    const obj = {};
+                    for (let j = 0; j < numCols; j++) {
+                        const val = row[j];
+                        const cTypeStr = colTypes[j] ? colTypes[j].toString() : '';
+                        if (val === null || val === undefined) {
+                            obj[colNames[j]] = null;
+                        } else if (cTypeStr === 'BLOB' || (val && val.constructor && val.constructor.name === 'DuckDBBlobValue')) {
+                            const rawBytes = val.bytes ? val.bytes : val;
+                            obj[colNames[j]] = Buffer.isBuffer(rawBytes) ? rawBytes : Buffer.from(rawBytes);
+                        } else {
+                            obj[colNames[j]] = normalizeValue(val);
+                        }
+                    }
+                    chunk[i] = obj;
+                }
                 yield chunk;
             }
         }
