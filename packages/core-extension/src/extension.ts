@@ -286,6 +286,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(executeCmd, cancelCmd, switchProfileCmd, injectSqlCmd, exportCellOutputCmd, copyCellOutputCmd, toggleHttpOutputCmd, deleteHistoryEntryCmd, clearHistoryCmd, cleanSessionCmd);
 
     return {
+        getContext: () => context,
         registerProvider: async (id: string, provider: any) => {
             await ProviderRegistry.getInstance().registerProvider(id, provider, new VsCodeEnvironment(context));
         },
