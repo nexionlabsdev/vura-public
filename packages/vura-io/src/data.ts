@@ -171,7 +171,16 @@ export class DataManager {
         return schemaMap;
     }
 
+    private checkTestPauseHook(): Promise<void> {
+        if (process.env.VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE) {
+            process.stderr.write("[VURA_TEST_HOOK] PAUSED_BEFORE_MANIFEST_WRITE\n");
+            return new Promise(() => {}); // pause indefinitely until killed
+        }
+        return Promise.resolve();
+    }
+
     private async saveManifestAtomically(tableName: string, manifest: any): Promise<string> {
+        await this.checkTestPauseHook();
         const dirPath = path.join(this.currentStoragePath, tableName);
         await fs.promises.mkdir(dirPath, { recursive: true });
         const manifestPath = path.join(dirPath, 'manifest.json');

@@ -117,4 +117,25 @@ describe('Phase 6 Partitioning & Threshold Contract Tests (TS)', () => {
         const readBack = await dataMgr.get('atomic_tbl');
         expect(readBack.length).toBe(10);
     });
+
+    test('isolated atomic rename unit test: failure during rename leaves manifest untouched', async () => {
+        const initialManifest = { version: 1, tableName: 'rename_tbl', rowCount: 10, parts: [{ file: 'part-0000.parquet', rowCount: 10 }] };
+        await (dataMgr as any).saveManifestAtomically('rename_tbl', initialManifest);
+
+        const manifestFile = path.join(tmpDir, 'rename_tbl', 'manifest.json');
+        expect(fs.existsSync(manifestFile)).toBe(true);
+
+        const updatedManifest = { version: 1, tableName: 'rename_tbl', rowCount: 20, parts: [{ file: 'part-0000.parquet', rowCount: 10 }, { file: 'part-0001.parquet', rowCount: 10 }] };
+
+        const originalRename = fs.promises.rename;
+        jest.spyOn(fs.promises, 'rename').mockImplementationOnce(async () => {
+            throw new Error('Simulated atomic rename I/O failure');
+        });
+
+        await expect((dataMgr as any).saveManifestAtomically('rename_tbl', updatedManifest)).rejects.toThrow('Simulated atomic rename I/O failure');
+
+        const savedManifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+        expect(savedManifest.rowCount).toBe(10);
+        expect(savedManifest.parts.length).toBe(1);
+    });
 });
