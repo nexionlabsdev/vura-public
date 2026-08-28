@@ -171,16 +171,47 @@ export class DataManager {
         return schemaMap;
     }
 
-    private checkTestPauseHook(): Promise<void> {
-        if (process.env.VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE) {
-            process.stderr.write("[VURA_TEST_HOOK] PAUSED_BEFORE_MANIFEST_WRITE\n");
+    private checkTestPauseHook(hookName: 'VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND' | 'VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE'): Promise<void> {
+        if (process.env[hookName]) {
+            const sentinel = hookName === 'VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND'
+                ? 'PAUSED_BEFORE_PARTS_LOG_APPEND'
+                : 'PAUSED_BEFORE_MANIFEST_WRITE';
+            process.stderr.write(`[VURA_TEST_HOOK] ${sentinel}\n`);
             return new Promise(() => {}); // pause indefinitely until killed
         }
         return Promise.resolve();
     }
 
+    private async getManifestParts(dirPath: string): Promise<{ file: string; rowCount: number }[]> {
+        const partsPath = path.join(dirPath, 'manifest-parts.jsonl');
+        if (!fs.existsSync(partsPath)) return [];
+        const content = await fs.promises.readFile(partsPath, 'utf-utf-8' in Buffer ? 'utf-8' : 'utf8');
+        const lines = content.split('\n').filter(l => l.trim().length > 0);
+        return lines.map(line => JSON.parse(line));
+    }
+
+    private async appendManifestPart(tableName: string, partEntry: { file: string; rowCount: number }): Promise<void> {
+        await this.checkTestPauseHook('VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND');
+        const dirPath = path.join(this.currentStoragePath, tableName);
+        await fs.promises.mkdir(dirPath, { recursive: true });
+        const partsPath = path.join(dirPath, 'manifest-parts.jsonl');
+        await fs.promises.appendFile(partsPath, JSON.stringify(partEntry) + '\n');
+    }
+
+    private async saveManifestPartsAtomically(tableName: string, parts: { file: string; rowCount: number }[]): Promise<string> {
+        await this.checkTestPauseHook('VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND');
+        const dirPath = path.join(this.currentStoragePath, tableName);
+        await fs.promises.mkdir(dirPath, { recursive: true });
+        const partsPath = path.join(dirPath, 'manifest-parts.jsonl');
+        const tmpPath = path.join(dirPath, `manifest-parts.jsonl.tmp.${Date.now()}.${Math.random().toString(36).substring(2, 7)}`);
+        const content = parts.map(p => JSON.stringify(p)).join('\n') + (parts.length > 0 ? '\n' : '');
+        await fs.promises.writeFile(tmpPath, content);
+        await fs.promises.rename(tmpPath, partsPath);
+        return partsPath;
+    }
+
     private async saveManifestAtomically(tableName: string, manifest: any): Promise<string> {
-        await this.checkTestPauseHook();
+        await this.checkTestPauseHook('VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE');
         const dirPath = path.join(this.currentStoragePath, tableName);
         await fs.promises.mkdir(dirPath, { recursive: true });
         const manifestPath = path.join(dirPath, 'manifest.json');
@@ -269,13 +300,15 @@ export class DataManager {
 
         const part0 = 'part-0000.parquet';
         await this.writeParquetPart(tableName, part0, rawRecords);
+        await this.saveManifestPartsAtomically(tableName, [{ file: part0, rowCount: rawRecords.length }]);
+
         const schemaMap = this.extractSchemaMap(rawRecords);
         const manifest = {
             version: 1,
             tableName,
             rowCount: rawRecords.length,
             compacted: false,
-            parts: [{ file: part0, rowCount: rawRecords.length }],
+            nextPartIndex: 1,
             schema: schemaMap
         };
         const manifestPath = await this.saveManifestAtomically(tableName, manifest);
@@ -298,9 +331,13 @@ export class DataManager {
 
         if (tableInfo.format === 'partitioned') {
             const dirPath = path.dirname(tableInfo.filePath);
+            const parts = await this.getManifestParts(dirPath);
+            if (parts.length === 0) return [];
+
             const conn = await this.getDuckDbConn();
-            const safeDirPath = dirPath.replace(/\\/g, '/');
-            const reader = await conn.runAndReadAll(`SELECT * FROM read_parquet('${safeDirPath}/*.parquet', union_by_name=true)`);
+            const safePartPaths = parts.map(p => path.join(dirPath, p.file).replace(/\\/g, '/'));
+            const filesArg = safePartPaths.map(p => `'${p}'`).join(', ');
+            const reader = await conn.runAndReadAll(`SELECT * FROM read_parquet([${filesArg}], union_by_name=true)`);
             const colNames = reader.columnNames();
             const rows = reader.getRows();
             const numCols = colNames.length;
@@ -514,13 +551,18 @@ export class DataManager {
             return;
         }
 
-        const safePath = tableInfo.format === 'partitioned'
-            ? path.dirname(tableInfo.filePath).replace(/\\/g, '/') + '/*.parquet'
-            : tableInfo.filePath.replace(/\\/g, '/');
-
-        const readFunc = tableInfo.format === 'partitioned'
-            ? `read_parquet('${safePath}', union_by_name=true)`
-            : `read_parquet('${safePath}')`;
+        let readFunc: string;
+        if (tableInfo.format === 'partitioned') {
+            const dirPath = path.dirname(tableInfo.filePath);
+            const parts = await this.getManifestParts(dirPath);
+            if (parts.length === 0) return;
+            const safePartPaths = parts.map(p => path.join(dirPath, p.file).replace(/\\/g, '/'));
+            const filesArg = safePartPaths.map(p => `'${p}'`).join(', ');
+            readFunc = `read_parquet([${filesArg}], union_by_name=true)`;
+        } else {
+            const safePath = tableInfo.filePath.replace(/\\/g, '/');
+            readFunc = `read_parquet('${safePath}')`;
+        }
 
         for (let offset = 0; offset < total; offset += batchSize) {
             const query = `SELECT * FROM ${readFunc} LIMIT ${batchSize} OFFSET ${offset}`;
@@ -582,13 +624,15 @@ export class DataManager {
             } else {
                 const part0 = 'part-0000.parquet';
                 await this.writeParquetPart(name, part0, buffered);
+                await this.saveManifestPartsAtomically(name, [{ file: part0, rowCount: buffered.length }]);
+
                 const schemaMap = this.extractSchemaMap(buffered);
                 const manifest = {
                     version: 1,
                     tableName: name,
                     rowCount: buffered.length,
                     compacted: false,
-                    parts: [{ file: part0, rowCount: buffered.length }],
+                    nextPartIndex: 1,
                     schema: schemaMap
                 };
                 const manifestPath = await this.saveManifestAtomically(name, manifest);
@@ -600,12 +644,13 @@ export class DataManager {
         if (tableInfo.format === 'partitioned') {
             const manifestContent = await fs.promises.readFile(tableInfo.filePath, 'utf-8');
             const manifest = JSON.parse(manifestContent);
-            const nextPartIndex = manifest.parts.length;
+            const nextPartIndex = manifest.nextPartIndex ?? 0;
             const partName = `part-${String(nextPartIndex).padStart(4, '0')}.parquet`;
             await this.writeParquetPart(name, partName, buffered);
+            await this.appendManifestPart(name, { file: partName, rowCount: buffered.length });
 
-            manifest.parts.push({ file: partName, rowCount: buffered.length });
             manifest.rowCount += buffered.length;
+            manifest.nextPartIndex = nextPartIndex + 1;
             const schemaMap = this.extractSchemaMap(buffered);
             manifest.schema = { ...manifest.schema, ...schemaMap };
 
@@ -628,16 +673,18 @@ export class DataManager {
             await this.writeParquetPart(name, part0, existingRows);
             await this.writeParquetPart(name, part1, buffered);
 
+            await this.saveManifestPartsAtomically(name, [
+                { file: part0, rowCount: existingRows.length },
+                { file: part1, rowCount: buffered.length }
+            ]);
+
             const schemaMap = this.extractSchemaMap(existingRows.concat(buffered));
             const manifest = {
                 version: 1,
                 tableName: name,
                 rowCount: totalRows,
                 compacted: false,
-                parts: [
-                    { file: part0, rowCount: existingRows.length },
-                    { file: part1, rowCount: buffered.length }
-                ],
+                nextPartIndex: 2,
                 schema: schemaMap
             };
             const manifestPath = await this.saveManifestAtomically(name, manifest);

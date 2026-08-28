@@ -6,15 +6,17 @@ describe('Schema Foundation (vura-io)', () => {
     expect(dir).toBeTruthy();
   });
 
-  it('should load and parse all three schemas at module-init / load time', () => {
+  it('should load and parse all schemas at module-init / load time', () => {
     const loaded = loadSchemas();
     expect(loaded.sidecarRequest).toBeDefined();
     expect(loaded.sidecarResponse).toBeDefined();
     expect(loaded.tableManifest).toBeDefined();
+    expect(loaded.tableManifestParts).toBeDefined();
 
     expect((loaded.sidecarRequest as any).$id).toBe('vura://sidecar/request.schema.json');
     expect((loaded.sidecarResponse as any).$id).toBe('vura://sidecar/response.schema.json');
     expect((loaded.tableManifest as any).$id).toBe('vura://table/manifest.schema.json');
+    expect((loaded.tableManifestParts as any).$id).toBe('vura://table/manifest-parts.schema.json');
   });
 
   it('should validate sample objects against compiled validators', () => {
@@ -33,9 +35,16 @@ describe('Schema Foundation (vura-io)', () => {
       version: 1,
       tableName: 'users',
       rowCount: 100,
-      parts: [{ file: 'users_1.parquet', rowCount: 100 }],
+      compacted: false,
+      nextPartIndex: 1,
       schema: { id: 'INTEGER', name: 'VARCHAR' }
     };
     expect(validators.tableManifest(validManifest)).toBe(true);
+
+    const validPartsLine = {
+      file: 'part-0000.parquet',
+      rowCount: 100
+    };
+    expect(validators.tableManifestParts(validPartsLine)).toBe(true);
   });
 });
