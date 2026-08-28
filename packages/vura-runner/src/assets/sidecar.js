@@ -216,32 +216,87 @@ class Shredder {
     }
 }
 
-class DataManager {
-    constructor(storagePath) {
-        this.storagePath = storagePath;
-        this.manifests = new Map();
-        this.pendingCalls = new Set();
-        this.bufferMap = new Map();
-
-        const methods = ['put', 'pack', 'get', 'unpack', 'tables', 'count', 'stream', 'append', 'flush', 'flushAll', 'update', 'upsert'];
-        for (const method of methods) {
-            const orig = this[method].bind(this);
-            this[method] = (...args) => {
-                const res = orig(...args);
-                if (res && typeof res.then === 'function') {
-                    this.pendingCalls.add(res);
-                    res.finally(() => this.pendingCalls.delete(res));
-                }
-                return res;
-            };
+function normalizeValue(val: any): any {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'number' || typeof val === 'boolean' || typeof val === 'string') {
+        return val;
+    }
+    if (typeof val === 'bigint') {
+        const num = Number(val);
+        return Number.isSafeInteger(num) ? num : val.toString();
+    }
+    if (typeof val.toUUID === 'function') {
+        return val.toUUID();
+    }
+    if (val.constructor && val.constructor.name === 'DuckDBUUIDValue') {
+        return val.toString();
+    }
+    if (typeof val.scale === 'number' && (typeof val.value === 'bigint' || typeof val.value === 'number')) {
+        return Number(val.value) / Math.pow(10, val.scale);
+    }
+    if (val instanceof Date) return val.toISOString();
+    if (typeof val.micros === 'bigint') {
+        return new Date(Number(val.micros / 1000n)).toISOString();
+    }
+    if (val instanceof Uint8Array || Buffer.isBuffer(val)) {
+        if (val.length === 16) {
+            const hex = Array.from(val, b => b.toString(16).padStart(2, '0')).join('');
+            return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
         }
+        return Array.from(val);
+    }
+    if (typeof val === 'object') {
+        if (val.entries && typeof val.entries === 'object') {
+            const res: Record<string, any> = {};
+            for (const [k, v] of Object.entries(val.entries)) {
+                res[k] = normalizeValue(v);
+            }
+            return res;
+        }
+        if (Array.isArray(val)) {
+            return val.map(normalizeValue);
+        }
+        if (typeof val.toJSON === 'function') {
+            return val.toJSON();
+        }
+        const res: Record<string, any> = {};
+        for (const [k, v] of Object.entries(val)) {
+            res[k] = normalizeValue(v);
+        }
+        return res;
+    }
+    return val;
+}
+
+export interface StreamOptions {
+    batchSize?: number;
+    format?: 'object' | 'arrow';
+}
+
+export interface UpdateOptions {
+    on: string | string[];
+}
+
+class DataManager {
+    private storagePath: string;
+    private manifests: Map<string, Manifest> = new Map();
+    private duckDbInstance?: DuckDBInstance;
+    private duckDbConn?: DuckDBConnection;
+    private bufferMap: Map<string, any[]> = new Map();
+
+    constructor(storagePath?: string) {
+        this.storagePath = storagePath || process.env.VURA_STORAGE_PATH || process.cwd();
     }
 
-    get currentStoragePath() {
+    public setStoragePath(p: string) {
+        this.storagePath = p;
+    }
+
+    private get currentStoragePath(): string {
         return process.env.VURA_STORAGE_PATH || this.storagePath;
     }
 
-    get partitionThresholdRows() {
+    private get partitionThresholdRows(): number {
         const envVal = process.env.VURA_PARTITION_THRESHOLD_ROWS;
         if (envVal) {
             const parsed = parseInt(envVal, 10);
@@ -250,11 +305,11 @@ class DataManager {
         return 50000;
     }
 
-    getTablePath(tableName, ext) {
+    private getTablePath(tableName: string, ext: 'arrow' | 'parquet'): string {
         return path.join(this.currentStoragePath, `${tableName}.${ext}`);
     }
 
-    findExistingTablePath(tableName) {
+    private findExistingTablePath(tableName: string): { filePath: string; format: 'arrow' | 'parquet' | 'partitioned' } | null {
         let baseName = tableName.replace(/\.(arrow|parquet)$/, '');
         let manifestPath = path.join(this.currentStoragePath, baseName, 'manifest.json');
         if (fs.existsSync(manifestPath)) {
@@ -281,15 +336,15 @@ class DataManager {
         return null;
     }
 
-    emitMapping(variableName, filePath, partitioned) {
-        const payload = { type: 'vura_io_mapping', variable: variableName, path: filePath };
+    private emitMapping(variableName: string, filePath: string, partitioned?: boolean) {
+        const payload: any = { type: 'vura_io_mapping', variable: variableName, path: filePath };
         if (partitioned) {
             payload.partitioned = true;
         }
         process.stderr.write(JSON.stringify(payload) + '\n');
     }
 
-    async getDuckDbConn() {
+    private async getDuckDbConn(): Promise<DuckDBConnection> {
         if (!this.duckDbConn) {
             this.duckDbInstance = await DuckDBInstance.create(':memory:');
             this.duckDbConn = await this.duckDbInstance.connect();
@@ -297,18 +352,9 @@ class DataManager {
         return this.duckDbConn;
     }
 
-    extractSchemaMap(records) {
-        let rawRecords;
-        if (records && typeof records === 'object' && (records.constructor?.name === 'Table' || typeof records.toArray === 'function')) {
-            rawRecords = records.toArray();
-        } else {
-            rawRecords = (!records || (Array.isArray(records) && records.length === 0))
-                ? [{ _vura_id: null, _vura_parent_id: null, _vura_index: null, _vura_value: null }]
-                : (Array.isArray(records) ? records : [records]);
-        }
-
-        const schemaMap = {};
-        for (const r of rawRecords) {
+    private extractSchemaMap(records: any[]): Record<string, string> {
+        const schemaMap: Record<string, string> = {};
+        for (const r of records) {
             if (r && typeof r === 'object') {
                 for (const [k, v] of Object.entries(r)) {
                     if (!schemaMap[k] || schemaMap[k] === 'VARCHAR') {
@@ -322,8 +368,6 @@ class DataManager {
                             schemaMap[k] = 'BIGINT';
                         } else if (v instanceof Date) {
                             schemaMap[k] = 'TIMESTAMP';
-                        } else if (Buffer.isBuffer(v) || v instanceof Uint8Array) {
-                            schemaMap[k] = 'BLOB';
                         } else {
                             schemaMap[k] = 'VARCHAR';
                         }
@@ -333,23 +377,53 @@ class DataManager {
                 }
             }
         }
-
         if (Object.keys(schemaMap).length === 0) {
             schemaMap['_vura_value'] = 'VARCHAR';
         }
         return schemaMap;
     }
 
-    checkTestPauseHook() {
-        if (process.env.VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE) {
-            fs.writeSync(2, "[VURA_TEST_HOOK] PAUSED_BEFORE_MANIFEST_WRITE\n");
+    private checkTestPauseHook(hookName: 'VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND' | 'VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE'): Promise<void> {
+        if (process.env[hookName]) {
+            const sentinel = hookName === 'VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND'
+                ? 'PAUSED_BEFORE_PARTS_LOG_APPEND'
+                : 'PAUSED_BEFORE_MANIFEST_WRITE';
+            process.stderr.write(`[VURA_TEST_HOOK] ${sentinel}\n`);
             return new Promise(() => {}); // pause indefinitely until killed
         }
         return Promise.resolve();
     }
 
-    async saveManifestAtomically(tableName, manifest) {
-        await this.checkTestPauseHook();
+    private async getManifestParts(dirPath: string): Promise<{ file: string; rowCount: number }[]> {
+        const partsPath = path.join(dirPath, 'manifest-parts.jsonl');
+        if (!fs.existsSync(partsPath)) return [];
+        const content = await fs.promises.readFile(partsPath, 'utf-utf-8' in Buffer ? 'utf-8' : 'utf8');
+        const lines = content.split('\n').filter(l => l.trim().length > 0);
+        return lines.map(line => JSON.parse(line));
+    }
+
+    private async appendManifestPart(tableName: string, partEntry: { file: string; rowCount: number }): Promise<void> {
+        await this.checkTestPauseHook('VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND');
+        const dirPath = path.join(this.currentStoragePath, tableName);
+        await fs.promises.mkdir(dirPath, { recursive: true });
+        const partsPath = path.join(dirPath, 'manifest-parts.jsonl');
+        await fs.promises.appendFile(partsPath, JSON.stringify(partEntry) + '\n');
+    }
+
+    private async saveManifestPartsAtomically(tableName: string, parts: { file: string; rowCount: number }[]): Promise<string> {
+        await this.checkTestPauseHook('VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND');
+        const dirPath = path.join(this.currentStoragePath, tableName);
+        await fs.promises.mkdir(dirPath, { recursive: true });
+        const partsPath = path.join(dirPath, 'manifest-parts.jsonl');
+        const tmpPath = path.join(dirPath, `manifest-parts.jsonl.tmp.${Date.now()}.${Math.random().toString(36).substring(2, 7)}`);
+        const content = parts.map(p => JSON.stringify(p)).join('\n') + (parts.length > 0 ? '\n' : '');
+        await fs.promises.writeFile(tmpPath, content);
+        await fs.promises.rename(tmpPath, partsPath);
+        return partsPath;
+    }
+
+    private async saveManifestAtomically(tableName: string, manifest: any): Promise<string> {
+        await this.checkTestPauseHook('VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE');
         const dirPath = path.join(this.currentStoragePath, tableName);
         await fs.promises.mkdir(dirPath, { recursive: true });
         const manifestPath = path.join(dirPath, 'manifest.json');
@@ -359,22 +433,13 @@ class DataManager {
         return manifestPath;
     }
 
-    async writeParquetPart(tableName, partName, records) {
+    private async writeParquetPart(tableName: string, partName: string, records: any[]): Promise<string> {
         const dirPath = path.join(this.currentStoragePath, tableName);
         await fs.promises.mkdir(dirPath, { recursive: true });
         const partPath = path.join(dirPath, partName);
         const safeTarget = partPath.replace(/\\/g, '/');
 
-        let rawRecords;
-        if (records && typeof records === 'object' && (records.constructor?.name === 'Table' || typeof records.toArray === 'function')) {
-            rawRecords = records.toArray();
-        } else {
-            rawRecords = (!records || (Array.isArray(records) && records.length === 0))
-                ? [{ _vura_id: null, _vura_parent_id: null, _vura_index: null, _vura_value: null }]
-                : (Array.isArray(records) ? records : [records]);
-        }
-
-        const schemaMap = this.extractSchemaMap(rawRecords);
+        const schemaMap = this.extractSchemaMap(records);
         const conn = await this.getDuckDbConn();
         const tempTableName = `_temp_part_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
         const colDefs = Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ');
@@ -383,7 +448,7 @@ class DataManager {
         const appender = await conn.createAppender(tempTableName, 'main');
         const keys = Object.keys(schemaMap);
 
-        for (const r of rawRecords) {
+        for (const r of records) {
             for (const k of keys) {
                 const val = r ? r[k] : null;
                 const type = schemaMap[k];
@@ -401,8 +466,6 @@ class DataManager {
                     appender.appendBoolean(Boolean(val));
                 } else if (type === 'TIMESTAMP' && val instanceof Date) {
                     appender.appendVarchar(val.toISOString());
-                } else if (type === 'BLOB') {
-                    appender.appendBlob(new Uint8Array(val));
                 } else {
                     appender.appendVarchar(typeof val === 'object' ? JSON.stringify(val) : String(val));
                 }
@@ -418,74 +481,19 @@ class DataManager {
         return partPath;
     }
 
-    async writeTableData(tableName, records) {
-        let rawRecords;
-        if (records && typeof records === 'object' && (records.constructor?.name === 'Table' || typeof records.toArray === 'function')) {
-            rawRecords = records.toArray();
+    private async writeTableData(tableName: string, records: any): Promise<string> {
+        let rawRecords: any[];
+        if (records && typeof records === 'object' && (records.constructor?.name === 'Table' || typeof (records as any).toArray === 'function')) {
+            rawRecords = (records as any).toArray();
         } else {
             rawRecords = (!records || (Array.isArray(records) && records.length === 0))
                 ? [{ _vura_id: null, _vura_parent_id: null, _vura_index: null, _vura_value: null }]
                 : (Array.isArray(records) ? records : [records]);
         }
 
-        const hasBlob = rawRecords.some(r => r && typeof r === 'object' && Object.values(r).some(v => Buffer.isBuffer(v) || v instanceof Uint8Array));
-
         if (rawRecords.length < this.partitionThresholdRows) {
-            if (hasBlob) {
-                const parquetPath = this.getTablePath(tableName, 'parquet');
-                await fs.promises.mkdir(path.dirname(parquetPath), { recursive: true });
-                const schemaMap = this.extractSchemaMap(rawRecords);
-                const conn = await this.getDuckDbConn();
-                const tempTableName = `_temp_single_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-                const colDefs = Object.entries(schemaMap).map(([k, t]) => `"${k}" ${t}`).join(', ');
-                await conn.runAndReadAll(`CREATE TEMP TABLE "${tempTableName}" (${colDefs})`);
-
-                const appender = await conn.createAppender(tempTableName, 'main');
-                const keys = Object.keys(schemaMap);
-
-                for (const r of rawRecords) {
-                    for (const k of keys) {
-                        const val = r ? r[k] : null;
-                        const type = schemaMap[k];
-                        if (val === null || val === undefined) {
-                            appender.appendNull();
-                        } else if (type === 'BIGINT') {
-                            if (typeof val === 'number' && !Number.isInteger(val)) {
-                                appender.appendDouble(val);
-                            } else {
-                                appender.appendBigInt(BigInt(Math.trunc(Number(val))));
-                            }
-                        } else if (type === 'DOUBLE') {
-                            appender.appendDouble(Number(val));
-                        } else if (type === 'BOOLEAN') {
-                            appender.appendBoolean(Boolean(val));
-                        } else if (type === 'TIMESTAMP' && val instanceof Date) {
-                            appender.appendVarchar(val.toISOString());
-                        } else if (type === 'BLOB') {
-                            appender.appendBlob(new Uint8Array(val));
-                        } else {
-                            appender.appendVarchar(typeof val === 'object' ? JSON.stringify(val) : String(val));
-                        }
-                    }
-                    appender.endRow();
-                }
-                appender.flushSync();
-                appender.closeSync();
-
-                const safeTarget = parquetPath.replace(/\\/g, '/');
-                await conn.runAndReadAll(`COPY "${tempTableName}" TO '${safeTarget}' (FORMAT PARQUET)`);
-                await conn.runAndReadAll(`DROP TABLE IF EXISTS "${tempTableName}"`);
-
-                const legacyArrow = this.getTablePath(tableName, 'arrow');
-                if (fs.existsSync(legacyArrow)) {
-                    await fs.promises.unlink(legacyArrow).catch(() => {});
-                }
-
-                return parquetPath;
-            }
-
-            const arrowTable = arrow.tableFromJSON(rawRecords);
-            const buffer = arrow.tableToIPC(arrowTable, 'file');
+            const table = arrow.tableFromJSON(rawRecords);
+            const buffer = arrow.tableToIPC(table, 'file');
             const arrowPath = this.getTablePath(tableName, 'arrow');
             await fs.promises.mkdir(path.dirname(arrowPath), { recursive: true });
             await fs.promises.writeFile(arrowPath, buffer);
@@ -504,13 +512,15 @@ class DataManager {
 
         const part0 = 'part-0000.parquet';
         await this.writeParquetPart(tableName, part0, rawRecords);
+        await this.saveManifestPartsAtomically(tableName, [{ file: part0, rowCount: rawRecords.length }]);
+
         const schemaMap = this.extractSchemaMap(rawRecords);
         const manifest = {
             version: 1,
             tableName,
             rowCount: rawRecords.length,
             compacted: false,
-            parts: [{ file: part0, rowCount: rawRecords.length }],
+            nextPartIndex: 1,
             schema: schemaMap
         };
         const manifestPath = await this.saveManifestAtomically(tableName, manifest);
@@ -527,34 +537,29 @@ class DataManager {
         return manifestPath;
     }
 
-    async readTableData(tableName) {
+    private async readTableData(tableName: string): Promise<any[]> {
         const tableInfo = this.findExistingTablePath(tableName);
         if (!tableInfo) return [];
 
         if (tableInfo.format === 'partitioned') {
             const dirPath = path.dirname(tableInfo.filePath);
+            const parts = await this.getManifestParts(dirPath);
+            if (parts.length === 0) return [];
+
             const conn = await this.getDuckDbConn();
-            const safeDirPath = dirPath.replace(/\\/g, '/');
-            const reader = await conn.runAndReadAll(`SELECT * FROM read_parquet('${safeDirPath}/*.parquet', union_by_name=true)`);
+            const safePartPaths = parts.map(p => path.join(dirPath, p.file).replace(/\\/g, '/'));
+            const filesArg = safePartPaths.map(p => `'${p}'`).join(', ');
+            const reader = await conn.runAndReadAll(`SELECT * FROM read_parquet([${filesArg}], union_by_name=true)`);
             const colNames = reader.columnNames();
-            const colTypes = reader.columnTypes ? reader.columnTypes() : [];
             const rows = reader.getRows();
             const numCols = colNames.length;
             const result = new Array(rows.length);
             for (let i = 0; i < rows.length; i++) {
                 const row = rows[i];
-                const obj = {};
+                const obj: Record<string, any> = {};
                 for (let j = 0; j < numCols; j++) {
                     const val = row[j];
-                    const cTypeStr = colTypes[j] ? colTypes[j].toString() : '';
-                    if (val === null || val === undefined) {
-                        obj[colNames[j]] = null;
-                    } else if (cTypeStr === 'BLOB' || (val && val.constructor && val.constructor.name === 'DuckDBBlobValue')) {
-                        const rawBytes = val.bytes ? val.bytes : val;
-                        obj[colNames[j]] = Buffer.isBuffer(rawBytes) ? rawBytes : Buffer.from(rawBytes);
-                    } else {
-                        obj[colNames[j]] = normalizeValue(val);
-                    }
+                    obj[colNames[j]] = val === null || val === undefined ? null : normalizeValue(val);
                 }
                 result[i] = obj;
             }
@@ -569,7 +574,7 @@ class DataManager {
             const result = new Array(rawRows.length);
             for (let i = 0; i < rawRows.length; i++) {
                 const r = rawRows[i];
-                const obj = {};
+                const obj: Record<string, any> = {};
                 for (const col of colNames) {
                     obj[col] = normalizeValue(r[col]);
                 }
@@ -580,25 +585,22 @@ class DataManager {
 
         const conn = await this.getDuckDbConn();
         const safePath = tableInfo.filePath.replace(/\\/g, '/');
-        const reader = await conn.runAndReadAll(`SELECT * FROM read_parquet('${safePath}')`);
+        let readQuery = `SELECT * FROM read_parquet('${safePath}')`;
+
+        let reader = await conn.runAndReadAll(readQuery);
 
         const colNames = reader.columnNames();
-        const colTypes = reader.columnTypes ? reader.columnTypes() : [];
         const rows = reader.getRows();
         const numCols = colNames.length;
         const result = new Array(rows.length);
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            const obj = {};
+            const obj: Record<string, any> = {};
             for (let j = 0; j < numCols; j++) {
                 const val = row[j];
-                const cTypeStr = colTypes[j] ? colTypes[j].toString() : '';
                 if (val === null || val === undefined) {
                     obj[colNames[j]] = null;
-                } else if (cTypeStr === 'BLOB' || (val && val.constructor && val.constructor.name === 'DuckDBBlobValue')) {
-                    const rawBytes = val.bytes ? val.bytes : val;
-                    obj[colNames[j]] = Buffer.isBuffer(rawBytes) ? rawBytes : Buffer.from(rawBytes);
                 } else {
                     obj[colNames[j]] = normalizeValue(val);
                 }
@@ -608,9 +610,9 @@ class DataManager {
         return result;
     }
 
-    async pack(name, obj) {
+    public async pack(name: string, obj: any): Promise<string[]> {
         this.bufferMap.delete(name);
-        const { tables, manifest, tableNames } = Shredder.shredJson(name, obj);
+        const { tables, manifest, tableNames } = shredJson(name, obj);
         this.manifests.set(name, manifest);
 
         for (const [tableName, records] of Object.entries(tables)) {
@@ -637,7 +639,7 @@ class DataManager {
         return tableNames;
     }
 
-    async unpack(name) {
+    public async unpack(name: string): Promise<any> {
         let manifest = this.manifests.get(name);
         if (!manifest) {
             const metaTableName = `__vura_meta_${name}`;
@@ -646,18 +648,18 @@ class DataManager {
                 throw new Error(`Dataset metadata for '${name}' not found.`);
             }
             manifest = JSON.parse(metaRecords[0].manifest);
-            this.manifests.set(name, manifest);
+            this.manifests.set(name, manifest!);
         }
 
-        const tables = {};
-        for (const tableName of Object.keys(manifest.tables)) {
+        const tables: Record<string, any[]> = {};
+        for (const tableName of Object.keys(manifest!.tables)) {
             tables[tableName] = await this.readTableData(tableName);
         }
 
-        return Shredder.unshredJson(manifest, tables);
+        return unshredJson(manifest!, tables);
     }
 
-    async put(name, obj) {
+    public async put(name: string, obj: any): Promise<string[]> {
         this.bufferMap.delete(name);
         if (obj && typeof obj === 'object' && (obj.constructor?.name === 'Table' || typeof obj.toArray === 'function')) {
             const writtenPath = await this.writeTableData(name, obj);
@@ -665,14 +667,13 @@ class DataManager {
             return [name];
         }
 
-        const isNested = (val) => {
+        const isNested = (val: any): boolean => {
             if (!val || typeof val !== 'object') return false;
             if (ArrayBuffer.isView(val) || val instanceof Uint8Array || Buffer.isBuffer(val) || val?.constructor?.name === 'Buffer' || val?.constructor?.name === 'Uint8Array') return false;
-            const list = Array.isArray(val) ? val : [val];
-            return list.some(item =>
-                item && typeof item === 'object' && !Array.isArray(item) && !(item instanceof Date) && !(item instanceof Uint8Array || Buffer.isBuffer(item)) &&
-                Object.values(item).some(v => v !== null && typeof v === 'object' && !(v instanceof Date) && !(v instanceof Uint8Array || Buffer.isBuffer(v)))
-            );
+            if (Array.isArray(val)) {
+                return val.some(item => isNested(item));
+            }
+            return Object.values(val).some(v => isNested(v));
         };
 
         if (isNested(obj)) {
@@ -685,7 +686,7 @@ class DataManager {
         return [name];
     }
 
-    async get(name) {
+    public async get(name: string): Promise<any> {
         await this.flush(name);
         const metaTableName = `__vura_meta_${name}`;
         const metaInfo = this.findExistingTablePath(metaTableName);
@@ -695,7 +696,7 @@ class DataManager {
         return await this.readTableData(name);
     }
 
-    async count(name) {
+    public async count(name: string): Promise<number> {
         await this.flush(name);
         const tableInfo = this.findExistingTablePath(name);
         if (!tableInfo) return 0;
@@ -726,12 +727,12 @@ class DataManager {
         return 0;
     }
 
-    async *stream(name, options) {
+    public async *stream(name: string, options?: StreamOptions): AsyncGenerator<any[], void, unknown> {
         await this.flush(name);
         const tableInfo = this.findExistingTablePath(name);
         if (!tableInfo) return;
 
-        const batchSize = options && options.batchSize && options.batchSize > 0 ? options.batchSize : 50000;
+        const batchSize = options?.batchSize && options.batchSize > 0 ? options.batchSize : 50000;
         const total = await this.count(name);
         if (total === 0) return;
 
@@ -740,9 +741,9 @@ class DataManager {
         if (tableInfo.format === 'arrow') {
             const buffer = await fs.promises.readFile(tableInfo.filePath);
             const table = arrow.tableFromIPC(buffer);
-            if (options && options.format === 'arrow') {
+            if (options?.format === 'arrow') {
                 for (let offset = 0; offset < total; offset += batchSize) {
-                    yield table.slice(offset, Math.min(offset + batchSize, total));
+                    yield table.slice(offset, Math.min(offset + batchSize, total)) as any;
                 }
                 return;
             }
@@ -751,7 +752,7 @@ class DataManager {
             for (let offset = 0; offset < total; offset += batchSize) {
                 const slice = rawRows.slice(offset, offset + batchSize);
                 const chunk = slice.map(r => {
-                    const obj = {};
+                    const obj: Record<string, any> = {};
                     for (const col of colNames) {
                         obj[col] = normalizeValue(r[col]);
                     }
@@ -762,46 +763,42 @@ class DataManager {
             return;
         }
 
-        const safePath = tableInfo.format === 'partitioned'
-            ? path.dirname(tableInfo.filePath).replace(/\\/g, '/') + '/*.parquet'
-            : tableInfo.filePath.replace(/\\/g, '/');
-
-        const readFunc = tableInfo.format === 'partitioned'
-            ? `read_parquet('${safePath}', union_by_name=true)`
-            : `read_parquet('${safePath}')`;
+        let readFunc: string;
+        if (tableInfo.format === 'partitioned') {
+            const dirPath = path.dirname(tableInfo.filePath);
+            const parts = await this.getManifestParts(dirPath);
+            if (parts.length === 0) return;
+            const safePartPaths = parts.map(p => path.join(dirPath, p.file).replace(/\\/g, '/'));
+            const filesArg = safePartPaths.map(p => `'${p}'`).join(', ');
+            readFunc = `read_parquet([${filesArg}], union_by_name=true)`;
+        } else {
+            const safePath = tableInfo.filePath.replace(/\\/g, '/');
+            readFunc = `read_parquet('${safePath}')`;
+        }
 
         for (let offset = 0; offset < total; offset += batchSize) {
             const query = `SELECT * FROM ${readFunc} LIMIT ${batchSize} OFFSET ${offset}`;
             const reader = await conn.runAndReadAll(query);
 
-            if (options && options.format === 'arrow') {
+            if (options?.format === 'arrow') {
                 const colsObj = reader.getColumnsObject();
-                const vecs = {};
+                const vecs: Record<string, any> = {};
                 for (const [k, v] of Object.entries(colsObj)) {
-                    vecs[k] = arrow.vectorFromArray(v);
+                    vecs[k] = arrow.vectorFromArray(v as any);
                 }
-                yield new arrow.Table(vecs);
+                yield new arrow.Table(vecs) as any;
             } else {
                 const colNames = reader.columnNames();
-                const colTypes = reader.columnTypes ? reader.columnTypes() : [];
                 const rows = reader.getRows();
                 const numCols = colNames.length;
                 const chunk = new Array(rows.length);
 
                 for (let i = 0; i < rows.length; i++) {
                     const row = rows[i];
-                    const obj = {};
+                    const obj: Record<string, any> = {};
                     for (let j = 0; j < numCols; j++) {
                         const val = row[j];
-                        const cTypeStr = colTypes[j] ? colTypes[j].toString() : '';
-                        if (val === null || val === undefined) {
-                            obj[colNames[j]] = null;
-                        } else if (cTypeStr === 'BLOB' || (val && val.constructor && val.constructor.name === 'DuckDBBlobValue')) {
-                            const rawBytes = val.bytes ? val.bytes : val;
-                            obj[colNames[j]] = Buffer.isBuffer(rawBytes) ? rawBytes : Buffer.from(rawBytes);
-                        } else {
-                            obj[colNames[j]] = normalizeValue(val);
-                        }
+                        obj[colNames[j]] = val === null || val === undefined ? null : normalizeValue(val);
                     }
                     chunk[i] = obj;
                 }
@@ -810,7 +807,7 @@ class DataManager {
         }
     }
 
-    async append(name, obj) {
+    public async append(name: string, obj: any): Promise<string[]> {
         const rawRecords = Array.isArray(obj) ? obj : [obj];
         if (rawRecords.length === 0) return [name];
 
@@ -824,7 +821,7 @@ class DataManager {
         return [name];
     }
 
-    async flush(name) {
+    public async flush(name: string): Promise<string[]> {
         const buffered = this.bufferMap.get(name);
         if (!buffered || buffered.length === 0) return [name];
         this.bufferMap.set(name, []);
@@ -839,13 +836,15 @@ class DataManager {
             } else {
                 const part0 = 'part-0000.parquet';
                 await this.writeParquetPart(name, part0, buffered);
+                await this.saveManifestPartsAtomically(name, [{ file: part0, rowCount: buffered.length }]);
+
                 const schemaMap = this.extractSchemaMap(buffered);
                 const manifest = {
                     version: 1,
                     tableName: name,
                     rowCount: buffered.length,
                     compacted: false,
-                    parts: [{ file: part0, rowCount: buffered.length }],
+                    nextPartIndex: 1,
                     schema: schemaMap
                 };
                 const manifestPath = await this.saveManifestAtomically(name, manifest);
@@ -857,12 +856,13 @@ class DataManager {
         if (tableInfo.format === 'partitioned') {
             const manifestContent = await fs.promises.readFile(tableInfo.filePath, 'utf-8');
             const manifest = JSON.parse(manifestContent);
-            const nextPartIndex = manifest.parts.length;
+            const nextPartIndex = manifest.nextPartIndex ?? 0;
             const partName = `part-${String(nextPartIndex).padStart(4, '0')}.parquet`;
             await this.writeParquetPart(name, partName, buffered);
+            await this.appendManifestPart(name, { file: partName, rowCount: buffered.length });
 
-            manifest.parts.push({ file: partName, rowCount: buffered.length });
             manifest.rowCount += buffered.length;
+            manifest.nextPartIndex = nextPartIndex + 1;
             const schemaMap = this.extractSchemaMap(buffered);
             manifest.schema = { ...manifest.schema, ...schemaMap };
 
@@ -885,16 +885,18 @@ class DataManager {
             await this.writeParquetPart(name, part0, existingRows);
             await this.writeParquetPart(name, part1, buffered);
 
+            await this.saveManifestPartsAtomically(name, [
+                { file: part0, rowCount: existingRows.length },
+                { file: part1, rowCount: buffered.length }
+            ]);
+
             const schemaMap = this.extractSchemaMap(existingRows.concat(buffered));
             const manifest = {
                 version: 1,
                 tableName: name,
                 rowCount: totalRows,
                 compacted: false,
-                parts: [
-                    { file: part0, rowCount: existingRows.length },
-                    { file: part1, rowCount: buffered.length }
-                ],
+                nextPartIndex: 2,
                 schema: schemaMap
             };
             const manifestPath = await this.saveManifestAtomically(name, manifest);
@@ -908,13 +910,13 @@ class DataManager {
         }
     }
 
-    async flushAll() {
+    public async flushAll(): Promise<void> {
         for (const name of Array.from(this.bufferMap.keys())) {
             await this.flush(name);
         }
     }
 
-    async update(name, records, options) {
+    public async update(name: string, records: any, options: UpdateOptions): Promise<string[]> {
         await this.flush(name);
         const tableInfo = this.findExistingTablePath(name);
         if (!tableInfo) {
@@ -943,7 +945,7 @@ class DataManager {
         return [name];
     }
 
-    async upsert(name, records, options) {
+    public async upsert(name: string, records: any, options: UpdateOptions): Promise<string[]> {
         await this.flush(name);
         const tableInfo = this.findExistingTablePath(name);
         if (!tableInfo) {
@@ -975,13 +977,13 @@ class DataManager {
         return [name];
     }
 
-    async tables(name) {
+    public async tables(name?: string): Promise<string[]> {
         await this.flushAll();
         if (name) {
             const metaTableName = `__vura_meta_${name}`;
             const metaRecords = await this.readTableData(metaTableName);
             if (metaRecords && metaRecords.length > 0 && metaRecords[0].manifest) {
-                const manifest = JSON.parse(metaRecords[0].manifest);
+                const manifest: Manifest = JSON.parse(metaRecords[0].manifest);
                 return Object.keys(manifest.tables);
             }
             return [name];
@@ -989,7 +991,7 @@ class DataManager {
 
         if (!fs.existsSync(this.currentStoragePath)) return [];
         const items = fs.readdirSync(this.currentStoragePath);
-        const res = [];
+        const res: string[] = [];
         for (const item of items) {
             if (item.startsWith('__vura_meta_')) continue;
             const fullPath = path.join(this.currentStoragePath, item);
@@ -1002,7 +1004,6 @@ class DataManager {
         return res;
     }
 }
-
 
 class StateManager {
     constructor() {

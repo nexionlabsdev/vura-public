@@ -17,6 +17,8 @@ describe('Phase 6 Partitioning & Threshold Contract Tests (TS)', () => {
 
     afterEach(() => {
         delete process.env.VURA_PARTITION_THRESHOLD_ROWS;
+        delete process.env.VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND;
+        delete process.env.VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE;
         if (fs.existsSync(tmpDir)) {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
@@ -45,16 +47,25 @@ describe('Phase 6 Partitioning & Threshold Contract Tests (TS)', () => {
 
         const arrowFile = path.join(tmpDir, 'test_tbl.arrow');
         const manifestFile = path.join(tmpDir, 'test_tbl', 'manifest.json');
+        const partsFile = path.join(tmpDir, 'test_tbl', 'manifest-parts.jsonl');
         const part0 = path.join(tmpDir, 'test_tbl', 'part-0000.parquet');
 
         expect(fs.existsSync(manifestFile)).toBe(true);
+        expect(fs.existsSync(partsFile)).toBe(true);
         expect(fs.existsSync(part0)).toBe(true);
         expect(fs.existsSync(arrowFile)).toBe(false);
 
-        const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf-utf-8' in Buffer ? 'utf-8' : 'utf8'));
+        const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
         expect(manifest.version).toBe(1);
         expect(manifest.rowCount).toBe(10);
-        expect(manifest.parts.length).toBe(1);
+        expect(manifest.nextPartIndex).toBe(1);
+        expect(manifest.parts).toBeUndefined();
+
+        const partsLines = fs.readFileSync(partsFile, 'utf8').trim().split('\n');
+        expect(partsLines.length).toBe(1);
+        const part0Log = JSON.parse(partsLines[0]);
+        expect(part0Log.file).toBe('part-0000.parquet');
+        expect(part0Log.rowCount).toBe(10);
 
         const count = await dataMgr.count('test_tbl');
         expect(count).toBe(10);
@@ -74,19 +85,47 @@ describe('Phase 6 Partitioning & Threshold Contract Tests (TS)', () => {
         expect(fs.existsSync(arrowFile)).toBe(false);
 
         const manifestFile = path.join(tmpDir, 'mig_tbl', 'manifest.json');
+        const partsFile = path.join(tmpDir, 'mig_tbl', 'manifest-parts.jsonl');
         const part0 = path.join(tmpDir, 'mig_tbl', 'part-0000.parquet');
         const part1 = path.join(tmpDir, 'mig_tbl', 'part-0001.parquet');
 
         expect(fs.existsSync(manifestFile)).toBe(true);
+        expect(fs.existsSync(partsFile)).toBe(true);
         expect(fs.existsSync(part0)).toBe(true);
         expect(fs.existsSync(part1)).toBe(true);
 
         const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
         expect(manifest.rowCount).toBe(11);
-        expect(manifest.parts.length).toBe(2);
+        expect(manifest.nextPartIndex).toBe(2);
+
+        const partsLines = fs.readFileSync(partsFile, 'utf8').trim().split('\n');
+        expect(partsLines.length).toBe(2);
 
         const readBack = await dataMgr.get('mig_tbl');
         expect(readBack.length).toBe(11);
+    });
+
+    test('update/upsert against partitioned table truncates manifest-parts.jsonl to 1 entry', async () => {
+        const rows = Array.from({ length: 10 }, (_, i) => ({ id: i, name: `row_${i}` }));
+        await dataMgr.put('upd_tbl', rows);
+
+        await dataMgr.append('upd_tbl', Array.from({ length: 10 }, (_, i) => ({ id: i + 10, name: `row_${i + 10}` })));
+        await dataMgr.flush('upd_tbl');
+
+        const partsFile = path.join(tmpDir, 'upd_tbl', 'manifest-parts.jsonl');
+        expect(fs.readFileSync(partsFile, 'utf8').trim().split('\n').length).toBe(2);
+
+        await dataMgr.update('upd_tbl', { id: 0, name: 'updated_0' }, { on: 'id' });
+
+        const partsAfterUpdate = fs.readFileSync(partsFile, 'utf8').trim().split('\n');
+        expect(partsAfterUpdate.length).toBe(1);
+
+        const manifestAfterUpdate = JSON.parse(fs.readFileSync(path.join(tmpDir, 'upd_tbl', 'manifest.json'), 'utf8'));
+        expect(manifestAfterUpdate.nextPartIndex).toBe(1);
+
+        const readBack = await dataMgr.get('upd_tbl');
+        expect(readBack.length).toBe(20);
+        expect(readBack.find((r: any) => r.id === 0).name).toBe('updated_0');
     });
 
     test('stream({ format: "arrow" }) returns genuine Apache Arrow Table', async () => {
@@ -119,15 +158,14 @@ describe('Phase 6 Partitioning & Threshold Contract Tests (TS)', () => {
     });
 
     test('isolated atomic rename unit test: failure during rename leaves manifest untouched', async () => {
-        const initialManifest = { version: 1, tableName: 'rename_tbl', rowCount: 10, parts: [{ file: 'part-0000.parquet', rowCount: 10 }] };
+        const initialManifest = { version: 1, tableName: 'rename_tbl', rowCount: 10, nextPartIndex: 1, schema: { id: 'BIGINT' } };
         await (dataMgr as any).saveManifestAtomically('rename_tbl', initialManifest);
 
         const manifestFile = path.join(tmpDir, 'rename_tbl', 'manifest.json');
         expect(fs.existsSync(manifestFile)).toBe(true);
 
-        const updatedManifest = { version: 1, tableName: 'rename_tbl', rowCount: 20, parts: [{ file: 'part-0000.parquet', rowCount: 10 }, { file: 'part-0001.parquet', rowCount: 10 }] };
+        const updatedManifest = { version: 1, tableName: 'rename_tbl', rowCount: 20, nextPartIndex: 2, schema: { id: 'BIGINT' } };
 
-        const originalRename = fs.promises.rename;
         jest.spyOn(fs.promises, 'rename').mockImplementationOnce(async () => {
             throw new Error('Simulated atomic rename I/O failure');
         });
@@ -136,6 +174,6 @@ describe('Phase 6 Partitioning & Threshold Contract Tests (TS)', () => {
 
         const savedManifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
         expect(savedManifest.rowCount).toBe(10);
-        expect(savedManifest.parts.length).toBe(1);
+        expect(savedManifest.nextPartIndex).toBe(1);
     });
 });

@@ -158,9 +158,43 @@ def unshred_json(manifest, tables):
     return reconstruct_node(manifest["root_table"], None)
 
 
+import os
+import json
+import sys
+import shutil
+import tempfile
+# shred_json defined above in sidecar.py
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+
+try:
+    import duckdb
+except ImportError:
+    duckdb = None
+
+import os
+import json
+import sys
+import shutil
+import tempfile
+# shred_json defined above in sidecar.py
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+
+try:
+    import duckdb
+except ImportError:
+    duckdb = None
+
 class DataManager:
-    def __init__(self, storage_path):
-        self.storage_path = storage_path
+    def __init__(self, storage_path=None):
+        self.storage_path = storage_path or os.environ.get("VURA_STORAGE_PATH", os.getcwd())
         self._manifests = {}
         self._duckdb_conn = None
         self._buffer_map = {}
@@ -177,10 +211,7 @@ class DataManager:
             try:
                 import pandas as pd
             except ImportError:
-                raise ImportError(
-                    "pandas and pyarrow are required for vura.io operations. "
-                    "Install them using: !pip install pandas pyarrow"
-                )
+                raise ImportError("pandas and pyarrow are required for vura.io operations. Install with: pip install pandas pyarrow")
         return pd
 
     def set_storage_path(self, path):
