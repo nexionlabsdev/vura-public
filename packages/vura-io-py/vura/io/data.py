@@ -92,16 +92,46 @@ class DataManager:
             payload["partitioned"] = True
         print(json.dumps(payload), file=sys.stderr)
 
-    def _check_test_pause_hook(self):
-        if os.environ.get("VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE"):
+    def _check_test_pause_hook(self, hook_name="VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE"):
+        if os.environ.get(hook_name):
+            sentinel = "PAUSED_BEFORE_PARTS_LOG_APPEND" if hook_name == "VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND" else "PAUSED_BEFORE_MANIFEST_WRITE"
             import time
             out_stream = sys.__stderr__ if sys.__stderr__ is not None else sys.stderr
-            out_stream.write("[VURA_TEST_HOOK] PAUSED_BEFORE_MANIFEST_WRITE\n")
+            out_stream.write(f"[VURA_TEST_HOOK] {sentinel}\n")
             out_stream.flush()
             while True:
                 time.sleep(0.1)
 
+    def _get_manifest_parts(self, dir_path):
+        parts_path = os.path.join(dir_path, 'manifest-parts.jsonl')
+        if not os.path.exists(parts_path):
+            return []
+        with open(parts_path, 'r', encoding='utf-utf-8' in Buffer if 'Buffer' in globals() else 'utf-8') if False else open(parts_path, 'r', encoding='utf-8') as f:
+            lines = [line.strip() for line in f if line.strip()]
+        return [json.loads(line) for line in lines]
+
+    def _append_manifest_part(self, table_name, part_entry):
+        self._check_test_pause_hook("VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND")
+        dir_path = os.path.join(self.current_storage_path, table_name)
+        os.makedirs(dir_path, exist_ok=True)
+        parts_path = os.path.join(dir_path, 'manifest-parts.jsonl')
+        with open(parts_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(part_entry) + '\n')
+
+    def _save_manifest_parts_atomically(self, table_name, parts):
+        self._check_test_pause_hook("VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND")
+        dir_path = os.path.join(self.current_storage_path, table_name)
+        os.makedirs(dir_path, exist_ok=True)
+        parts_path = os.path.join(dir_path, 'manifest-parts.jsonl')
+        fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='manifest-parts.jsonl.tmp.')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            for p in parts:
+                f.write(json.dumps(p) + '\n')
+        os.replace(tmp_path, parts_path)
+        return parts_path
+
     def _save_manifest_atomically(self, table_name, manifest):
+        self._check_test_pause_hook("VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE")
         self._check_test_pause_hook()
         dir_path = os.path.join(self.current_storage_path, table_name)
         os.makedirs(dir_path, exist_ok=True)
@@ -184,13 +214,14 @@ class DataManager:
 
         part0 = 'part-0000.parquet'
         self._write_parquet_part(table_name, part0, table)
+        self._save_manifest_parts_atomically(table_name, [{"file": part0, "rowCount": len(table)}])
         schema_map = self._extract_schema_map(table)
         manifest = {
             "version": 1,
             "tableName": table_name,
             "rowCount": len(table),
             "compacted": False,
-            "parts": [{"file": part0, "rowCount": len(table)}],
+            "nextPartIndex": 1,
             "schema": schema_map
         }
         manifest_path = self._save_manifest_atomically(table_name, manifest)
@@ -218,7 +249,10 @@ class DataManager:
 
         if fmt == 'partitioned':
             dir_path = os.path.dirname(file_path)
-            part_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.parquet')]
+            parts = self._get_manifest_parts(dir_path)
+            if not parts:
+                return []
+            part_files = [os.path.join(dir_path, p['file']) for p in parts]
             import pyarrow.dataset as ds
             dataset = ds.dataset(part_files, format="parquet")
             df = dataset.to_table().to_pandas()
@@ -310,7 +344,10 @@ class DataManager:
 
         if fmt == 'partitioned':
             dir_path = os.path.dirname(file_path)
-            part_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.parquet')]
+            parts = self._get_manifest_parts(dir_path)
+            if not parts:
+                return
+            part_files = [os.path.join(dir_path, p['file']) for p in parts]
             import pyarrow.dataset as ds
             dataset = ds.dataset(part_files, format="parquet")
             return dataset.to_table().to_pandas()
@@ -347,7 +384,10 @@ class DataManager:
 
         if fmt == 'partitioned':
             dir_path = os.path.dirname(file_path)
-            part_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.parquet')]
+            parts = self._get_manifest_parts(dir_path)
+            if not parts:
+                return
+            part_files = [os.path.join(dir_path, p['file']) for p in parts]
             import pyarrow.dataset as ds
             dataset = ds.dataset(part_files, format="parquet")
             for batch in dataset.to_batches(batch_size=batch_size):
@@ -417,14 +457,16 @@ class DataManager:
                 return [name]
             else:
                 part0 = 'part-0000.parquet'
-                self._write_parquet_part(name, part0, buffered)
-                schema_map = self._extract_schema_map(buffered)
+                table_buf = self._to_pyarrow_table(buffered)
+                self._write_parquet_part(name, part0, table_buf)
+                self._save_manifest_parts_atomically(name, [{"file": part0, "rowCount": len(table_buf)}])
+                schema_map = self._extract_schema_map(table_buf)
                 manifest = {
                     "version": 1,
                     "tableName": name,
-                    "rowCount": len(buffered),
+                    "rowCount": len(table_buf),
                     "compacted": False,
-                    "parts": [{"file": part0, "rowCount": len(buffered)}],
+                    "nextPartIndex": 1,
                     "schema": schema_map
                 }
                 manifest_path = self._save_manifest_atomically(name, manifest)
@@ -434,13 +476,15 @@ class DataManager:
         if fmt == 'partitioned':
             with open(file_path, 'r', encoding='utf-8') as f:
                 manifest = json.load(f)
-            next_part_index = len(manifest.get("parts", []))
+            next_part_index = manifest.get("nextPartIndex", 0)
             part_name = f"part-{next_part_index:04d}.parquet"
-            self._write_parquet_part(name, part_name, buffered)
+            table_buf = self._to_pyarrow_table(buffered)
+            self._write_parquet_part(name, part_name, table_buf)
+            self._append_manifest_part(name, {"file": part_name, "rowCount": len(table_buf)})
 
-            manifest["parts"].append({"file": part_name, "rowCount": len(buffered)})
-            manifest["rowCount"] += len(buffered)
-            schema_map = self._extract_schema_map(buffered)
+            manifest["rowCount"] += len(table_buf)
+            manifest["nextPartIndex"] = next_part_index + 1
+            schema_map = self._extract_schema_map(table_buf)
             manifest.setdefault("schema", {}).update(schema_map)
 
             manifest_path = self._save_manifest_atomically(name, manifest)
@@ -458,7 +502,8 @@ class DataManager:
             import pyarrow.parquet as pq
             existing_table = pq.read_table(file_path)
 
-        combined_table = pa.concat_tables([existing_table, buffered], promote_options="permissive")
+        table_buf = self._to_pyarrow_table(buffered)
+        combined_table = pa.concat_tables([existing_table, table_buf], promote_options="permissive")
         total_rows = len(combined_table)
 
         if total_rows < self.partition_threshold_rows:
@@ -470,7 +515,11 @@ class DataManager:
         part0 = 'part-0000.parquet'
         part1 = 'part-0001.parquet'
         self._write_parquet_part(name, part0, existing_table)
-        self._write_parquet_part(name, part1, buffered)
+        self._write_parquet_part(name, part1, table_buf)
+        self._save_manifest_parts_atomically(name, [
+            {"file": part0, "rowCount": len(existing_table)},
+            {"file": part1, "rowCount": len(table_buf)}
+        ])
 
         schema_map = self._extract_schema_map(combined_table)
         manifest = {
@@ -478,10 +527,7 @@ class DataManager:
             "tableName": name,
             "rowCount": total_rows,
             "compacted": False,
-            "parts": [
-                {"file": part0, "rowCount": len(existing_table)},
-                {"file": part1, "rowCount": len(buffered)}
-            ],
+            "nextPartIndex": 2,
             "schema": schema_map
         }
         manifest_path = self._save_manifest_atomically(name, manifest)

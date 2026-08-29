@@ -1,3 +1,4 @@
+import threading
 #!/usr/bin/env python3
 import os
 import sys
@@ -36,6 +37,16 @@ class SidecarClient:
         )
         self.storage_path = storage_path
         self._req_id = 0
+        self.stderr_lines = []
+        self._stderr_thread = threading.Thread(target=self._drain_stderr, daemon=True)
+        self._stderr_thread.start()
+
+    def _drain_stderr(self):
+        try:
+            for line in self.proc.stderr:
+                self.stderr_lines.append(line)
+        except Exception:
+            pass
 
     def execute_code(self, code: str) -> Dict[str, Any]:
         self._req_id += 1
@@ -50,7 +61,7 @@ class SidecarClient:
 
         line = self.proc.stdout.readline()
         if not line:
-            stderr_out = self.proc.stderr.read() if self.proc.stderr else ""
+            stderr_out = "".join(self.stderr_lines)
             raise RuntimeError(f"Sidecar process closed unexpectedly. Stderr: {stderr_out}")
         return json.loads(line.strip())
 
