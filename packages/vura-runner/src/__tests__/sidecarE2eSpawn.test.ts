@@ -35,10 +35,10 @@ describe('Sidecar E2E Process Spawn Tests (JS & Py)', () => {
         const worker = await sidecarPool.acquire(poolKey, spawnFn);
 
         const testCases = [
-            { rows: 499, expectedParted: false, expectedParts: 0 },
-            { rows: 500, expectedParted: true, expectedParts: 1 },
-            { rows: 501, expectedParted: true, expectedParts: 1 },
-            { rows: 1000, expectedParted: true, expectedParts: 1 },
+            { rows: 499, expectedParted: false },
+            { rows: 500, expectedParted: true, expectedNextPartIndex: 1 },
+            { rows: 501, expectedParted: true, expectedNextPartIndex: 1 },
+            { rows: 1000, expectedParted: true, expectedNextPartIndex: 1 },
         ];
 
         for (let i = 0; i < testCases.length; i++) {
@@ -73,6 +73,7 @@ save_table("${varName}", rows);
 
             const singleFile = path.join(tempDir, `${varName}.arrow`);
             const manifestPath = path.join(tempDir, varName, 'manifest.json');
+            const partsLogPath = path.join(tempDir, varName, 'manifest-parts.jsonl');
 
             if (!tc.expectedParted) {
                 const stat = await fs.stat(singleFile);
@@ -80,9 +81,12 @@ save_table("${varName}", rows);
             } else {
                 const manifestContent = await fs.readFile(manifestPath, 'utf8');
                 const manifest = JSON.parse(manifestContent);
-                expect(manifest.parts.length).toBe(tc.expectedParts);
-                const rowCount = manifest.rowCount ?? manifest.total_rows ?? manifest.parts.reduce((a: number, p: any) => a + (p.rowCount || p.rows), 0);
-                expect(rowCount).toBe(tc.rows);
+                expect(manifest.nextPartIndex).toBe(tc.expectedNextPartIndex);
+                expect(manifest.parts).toBeUndefined();
+
+                const partsContent = await fs.readFile(partsLogPath, 'utf8');
+                const partsLines = partsContent.trim().split('\n').filter(Boolean);
+                expect(partsLines.length).toBe(tc.expectedNextPartIndex);
             }
         }
 
@@ -131,28 +135,28 @@ save_table("blob_tbl", [{"id": 1, "data": data}])
     });
 
     test.each([
-        ['Python sidecar', (pauseEnv: boolean) => spawn('python3', [pythonSidecar, '--serve'], {
+        ['Python sidecar', (pauseEnvKey: string | null) => spawn('python3', [pythonSidecar, '--serve'], {
             env: {
                 ...process.env,
                 VURA_STORAGE_PATH: tempDir,
                 VURA_PARTITION_THRESHOLD_ROWS: '10',
                 PYTHONPATH: pythonPath,
-                ...(pauseEnv ? { VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE: '1' } : {})
+                ...(pauseEnvKey ? { [pauseEnvKey]: '1' } : {})
             },
             stdio: ['pipe', 'pipe', 'pipe']
         })],
-        ['JavaScript sidecar', (pauseEnv: boolean) => spawn('node', [jsSidecar, '--serve'], {
+        ['JavaScript sidecar', (pauseEnvKey: string | null) => spawn('node', [jsSidecar, '--serve'], {
             env: {
                 ...process.env,
                 VURA_STORAGE_PATH: tempDir,
                 VURA_PARTITION_THRESHOLD_ROWS: '10',
-                ...(pauseEnv ? { VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE: '1' } : {})
+                ...(pauseEnvKey ? { [pauseEnvKey]: '1' } : {})
             },
             stdio: ['pipe', 'pipe', 'pipe']
         })],
-    ])('%s: deterministic SIGKILL mid-flush test via VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE', async (name, spawnFn) => {
+    ])('%s: deterministic SIGKILL mid-flush test via VURA_TEST_PAUSE_BEFORE_PARTS_LOG_APPEND and VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE', async (name, spawnFn) => {
         // Step 1: Initial write (10 rows, creates partitioned table part-0000.parquet & manifest.json)
-        const proc1 = spawnFn(false);
+        const proc1 = spawnFn(null);
         const code1 = name.includes('Python')
             ? `from vura.io import save_table\nsave_table("crash_tbl", [{"id": j} for j in range(10)])\n`
             : `const { save_table } = require('vura');\nsave_table("crash_tbl", Array.from({ length: 10 }, (_, j) => ({ id: j })));\n`;
@@ -169,12 +173,12 @@ save_table("blob_tbl", [{"id": 1, "data": data}])
         const manifestPath = path.join(tempDir, 'crash_tbl', 'manifest.json');
         const manifest1 = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
         expect(manifest1.rowCount).toBe(10);
-        expect(manifest1.parts.length).toBe(1);
+        expect(manifest1.nextPartIndex).toBe(1);
 
         proc1.kill();
 
         // Step 2: Spawn process with VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE=1 and attempt append of 10 rows
-        const proc2 = spawnFn(true);
+        const proc2 = spawnFn('VURA_TEST_PAUSE_BEFORE_MANIFEST_WRITE');
         let sentinelSeen = false;
 
         const sentinelPromise = new Promise<void>((resolve) => {
@@ -190,7 +194,7 @@ save_table("blob_tbl", [{"id": 1, "data": data}])
 
         const code2 = name.includes('Python')
             ? `from vura.io import append\nappend("crash_tbl", [{"id": j + 10} for j in range(10)])\n`
-            : `const { append } = require('vura');\nawait append("crash_tbl", Array.from({ length: 10 }, (_, j) => ({ id: j + 10 })));\n`;
+            : `const { append } = require('vura');\nappend("crash_tbl", Array.from({ length: 10 }, (_, j) => ({ id: j + 10 })));\n`;
 
         proc2.stdin.write(JSON.stringify({ id: 'req_append', code: code2, ctx: { storagePath: tempDir } }) + '\n');
 
@@ -207,10 +211,10 @@ save_table("blob_tbl", [{"id": 1, "data": data}])
         proc2.kill('SIGKILL');
 
         // Step 3: Spawn fresh sidecar without pause hook and read crash_tbl count
-        const proc3 = spawnFn(false);
+        const proc3 = spawnFn(null);
         const code3 = name.includes('Python')
             ? `from vura.io import count\nprint(f"COUNT:{count('crash_tbl')}")\n`
-            : `const { count } = require('vura');\nconsole.log(\`COUNT:\${await count('crash_tbl')}\`);\n`;
+            : `const { count } = require('vura');\nconst c = await count('crash_tbl');\nconsole.log(\`COUNT:\${c}\`);\n`;
 
         proc3.stdin.write(JSON.stringify({ id: 'req_read', code: code3, ctx: { storagePath: tempDir } }) + '\n');
         const readRes = await new Promise<any>((resolve) => {
@@ -220,7 +224,7 @@ save_table("blob_tbl", [{"id": 1, "data": data}])
         });
         proc3.kill();
 
-        expect(readRes.status).toBe('ok');
+           expect(readRes.status).toBe('ok');
         const match = readRes.stdout.match(/COUNT:(\d+)/);
         expect(match).not.toBeNull();
         const readCount = parseInt(match[1], 10);

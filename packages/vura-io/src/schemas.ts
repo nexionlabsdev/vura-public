@@ -6,10 +6,12 @@ export interface LoadedSchemas {
   sidecarRequest: object;
   sidecarResponse: object;
   tableManifest: object;
+  tableManifestParts: object;
   validators: {
     sidecarRequest: ValidateFunction;
     sidecarResponse: ValidateFunction;
     tableManifest: ValidateFunction;
+    tableManifestParts: ValidateFunction;
   };
 }
 
@@ -36,10 +38,12 @@ export function loadSchemas(): LoadedSchemas {
   const sidecarRequestRaw = fs.readFileSync(path.join(schemaDir, 'sidecar-request.schema.json'), 'utf-8');
   const sidecarResponseRaw = fs.readFileSync(path.join(schemaDir, 'sidecar-response.schema.json'), 'utf-8');
   const tableManifestRaw = fs.readFileSync(path.join(schemaDir, 'table-manifest.schema.json'), 'utf-8');
+  const tableManifestPartsRaw = fs.readFileSync(path.join(schemaDir, 'table-manifest-parts.schema.json'), 'utf-8');
 
   const sidecarRequest = JSON.parse(sidecarRequestRaw);
   const sidecarResponse = JSON.parse(sidecarResponseRaw);
   const tableManifest = JSON.parse(tableManifestRaw);
+  const tableManifestParts = JSON.parse(tableManifestPartsRaw);
 
   const ajv = new Ajv({ strict: false });
 
@@ -47,12 +51,14 @@ export function loadSchemas(): LoadedSchemas {
     sidecarRequest: ajv.compile(sidecarRequest),
     sidecarResponse: ajv.compile(sidecarResponse),
     tableManifest: ajv.compile(tableManifest),
+    tableManifestParts: ajv.compile(tableManifestParts),
   };
 
   return {
     sidecarRequest,
     sidecarResponse,
     tableManifest,
+    tableManifestParts,
     validators,
   };
 }

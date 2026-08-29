@@ -71,6 +71,7 @@ export class DataManager {
     private duckDbInstance?: DuckDBInstance;
     private duckDbConn?: DuckDBConnection;
     private bufferMap: Map<string, any[]> = new Map();
+    public pendingCalls: Set<Promise<any>> = new Set();
 
     constructor(storagePath?: string) {
         this.storagePath = storagePath || process.env.VURA_STORAGE_PATH || process.cwd();
@@ -398,7 +399,16 @@ export class DataManager {
         return result;
     }
 
+        private trackAsync<T>(promise: Promise<T>): Promise<T> {
+        this.pendingCalls.add(promise);
+        promise.catch(() => {}).finally(() => {
+            this.pendingCalls.delete(promise);
+        });
+        return promise;
+    }
+
     public async pack(name: string, obj: any): Promise<string[]> {
+        const _p = (async () => {
         this.bufferMap.delete(name);
         const { tables, manifest, tableNames } = shredJson(name, obj);
         this.manifests.set(name, manifest);
@@ -425,6 +435,8 @@ export class DataManager {
         this.emitMapping(name, rootPath, rootTableInfo?.format === 'partitioned');
 
         return tableNames;
+    })();
+        return this.trackAsync(_p);
     }
 
     public async unpack(name: string): Promise<any> {
@@ -448,6 +460,7 @@ export class DataManager {
     }
 
     public async put(name: string, obj: any): Promise<string[]> {
+        const _p = (async () => {
         this.bufferMap.delete(name);
         if (obj && typeof obj === 'object' && (obj.constructor?.name === 'Table' || typeof obj.toArray === 'function')) {
             const writtenPath = await this.writeTableData(name, obj);
@@ -472,6 +485,8 @@ export class DataManager {
         const writtenPath = await this.writeTableData(name, records);
         this.emitMapping(name, writtenPath, writtenPath.endsWith('manifest.json'));
         return [name];
+    })();
+        return this.trackAsync(_p);
     }
 
     public async get(name: string): Promise<any> {
@@ -596,6 +611,7 @@ export class DataManager {
     }
 
     public async append(name: string, obj: any): Promise<string[]> {
+        const _p = (async () => {
         const rawRecords = Array.isArray(obj) ? obj : [obj];
         if (rawRecords.length === 0) return [name];
 
@@ -607,9 +623,12 @@ export class DataManager {
             await this.flush(name);
         }
         return [name];
+    })();
+        return this.trackAsync(_p);
     }
 
     public async flush(name: string): Promise<string[]> {
+        const _p = (async () => {
         const buffered = this.bufferMap.get(name);
         if (!buffered || buffered.length === 0) return [name];
         this.bufferMap.set(name, []);
@@ -696,15 +715,27 @@ export class DataManager {
             this.emitMapping(name, manifestPath, true);
             return [name];
         }
+    })();
+        return this.trackAsync(_p);
     }
 
     public async flushAll(): Promise<void> {
         for (const name of Array.from(this.bufferMap.keys())) {
             await this.flush(name);
         }
+        while (this.pendingCalls.size > 0) {
+            const currentCalls = Array.from(this.pendingCalls);
+            const results = await Promise.allSettled(currentCalls);
+            for (const res of results) {
+                if (res.status === 'rejected') {
+                    throw res.reason;
+                }
+            }
+        }
     }
 
     public async update(name: string, records: any, options: UpdateOptions): Promise<string[]> {
+        const _p = (async () => {
         await this.flush(name);
         const tableInfo = this.findExistingTablePath(name);
         if (!tableInfo) {
@@ -731,9 +762,12 @@ export class DataManager {
         const writtenPath = await this.writeTableData(name, updatedRecords);
         this.emitMapping(name, writtenPath, writtenPath.endsWith('manifest.json'));
         return [name];
+    })();
+        return this.trackAsync(_p);
     }
 
     public async upsert(name: string, records: any, options: UpdateOptions): Promise<string[]> {
+        const _p = (async () => {
         await this.flush(name);
         const tableInfo = this.findExistingTablePath(name);
         if (!tableInfo) {
@@ -763,6 +797,8 @@ export class DataManager {
         const writtenPath = await this.writeTableData(name, updatedRecords);
         this.emitMapping(name, writtenPath, writtenPath.endsWith('manifest.json'));
         return [name];
+    })();
+        return this.trackAsync(_p);
     }
 
     public async tables(name?: string): Promise<string[]> {
