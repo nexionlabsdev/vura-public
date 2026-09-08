@@ -56,12 +56,12 @@ Magic commands like `!sync_dataverse` are handled by Add-ons — the same ones t
 version: 1
 cells: [...]
 requiredPlugins:
-  - "@vura-data-os/vura-dataverse-runner-plugin"
+  - "@vura-data-os/vura-dataverse"
 ```
 
 ```bash
 # or globally, for notebooks that don't declare it themselves
-vura-runner config set vura.plugins '["@vura-data-os/vura-dataverse-runner-plugin"]'
+vura-runner config set vura.plugins '["@vura-data-os/vura-dataverse"]'
 ```
 
 See the [SDK Guide](https://github.com/nexionlabsdev/vura-public/blob/main/docs/sdk_guide.md) for building your own plugin.

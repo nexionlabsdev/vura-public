@@ -2,7 +2,7 @@
 
 The core VS Code extension for [VURA](https://github.com/nexionlabsdev/vura-public) — an engineer-native notebook platform uniting SQL, Python, JavaScript, and HTML in one `.flownb` notebook, backed by an embedded DuckDB/Parquet bridge.
 
-This is the **kernel** in VURA's micro-kernel architecture: it renders `.flownb` notebooks, runs SQL/Python/JavaScript/HTML cells, and exposes a `ProviderRegistry` (from `@vura-data-os/core-sdk`) that separate Add-on extensions — like `vura-dataverse-adapter` — register into to add their own magic commands.
+This is the **kernel** in VURA's micro-kernel architecture: it renders `.flownb` notebooks, runs SQL/Python/JavaScript/HTML cells, and exposes a `ProviderRegistry` (from `@vura-data-os/core-sdk`) that separate Add-on extensions — like `vura-dataverse` — register into to add their own magic commands.
 
 ## Features
 

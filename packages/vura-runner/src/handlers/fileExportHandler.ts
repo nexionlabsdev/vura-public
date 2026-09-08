@@ -5,7 +5,7 @@ import * as ExcelJS from 'exceljs';
 import { stringify } from 'csv-stringify';
 // @ts-ignore
 import * as parquet from 'parquetjs-lite';
-const { data } = require('@vura/io');
+const { data } = require('@vura-data-os/vura-io');
 import { DuckDbManager } from '../services/duckDbManager';
 import { IVuraEnvironment, ICellLogger } from '../interfaces';
 

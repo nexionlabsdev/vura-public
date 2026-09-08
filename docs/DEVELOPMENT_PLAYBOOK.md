@@ -1,6 +1,6 @@
 # Development Playbook
 
-This is the local bootstrap guide for the VURA open-source core: the VS Code extension, `core-sdk`, `vura-dataverse-adapter`, and `vura-runner`. It only covers running notebooks locally — no Kubernetes, Kafka, or remote infrastructure required.
+This is the local bootstrap guide for the VURA open-source core: the VS Code extension, `core-sdk`, `vura-dataverse`, and `vura-runner`. It only covers running notebooks locally — no Kubernetes, Kafka, or remote infrastructure required.
 
 ## Prerequisites
 
@@ -59,7 +59,7 @@ node out/cli.js run ../../example.flownb
 
 ## 4. Building a custom Add-on
 
-See [`sdk_guide.md`](sdk_guide.md) for the `IVuraProvider` / `IConnectionAdapter` contracts, and [`dataverse_integration.md`](dataverse_integration.md) as a worked example of the same Add-on logic running in both the VS Code extension and `vura-runner` (via `vura-dataverse-sync-core` + `vura-dataverse-adapter` + `vura-dataverse-runner-plugin`).
+See [`sdk_guide.md`](sdk_guide.md) for the `IVuraProvider` / `IConnectionAdapter` contracts, and [`dataverse_integration.md`](dataverse_integration.md) as a worked example of the same Add-on logic running in both the VS Code extension and `vura-runner` (via the single `vura-dataverse` package).
 
 ---
 

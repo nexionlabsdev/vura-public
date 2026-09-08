@@ -37,7 +37,7 @@
     "@azure/msal-node": "^2.16.2",
     "@duckdb/node-api": "^1.5.5-r.4",
     "@vura-data-os/core-sdk": "^1.0.0",
-    "@vura/io": "^1.0.0",
+    "@vura-data-os/vura-io": "^1.0.0",
     "ajv": "^8.17.1",
     "apache-arrow": "^21.2.0",
     "commander": "^13.1.0",

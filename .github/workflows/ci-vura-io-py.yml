@@ -1,0 +1,55 @@
+name: CI - vura-io-py
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/vura-io-py/**'
+      - 'schemas/**'
+      - 'scripts/copy-schemas.js'
+      - '.github/workflows/ci-vura-io-py.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/vura-io-py/**'
+      - 'schemas/**'
+      - 'scripts/copy-schemas.js'
+      - '.github/workflows/ci-vura-io-py.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-vura-io-py-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Copies schemas/*.json into vura/io/schemas so it's included in the
+      # package — see packages/vura-io-py/vura/io/schemas.py. Same step
+      # release-vura-io-py.yml runs before building the wheel that ships to
+      # PyPI.
+      - name: Sync schemas contract into vura-io-py
+        run: node scripts/copy-schemas.js
+
+      - name: Install vura-io-py
+        run: cd packages/vura-io-py && pip install .
+
+      - name: Test vura-io-py
+        run: cd packages/vura-io-py && python -m unittest discover -s tests -v
+
+      - name: Build sdist and wheel (sanity check only, not published here)
+        run: |
+          pip install build
+          cd packages/vura-io-py && python -m build

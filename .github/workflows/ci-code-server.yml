@@ -1,0 +1,50 @@
+name: CI - code-server image
+
+# Sanity-builds docker/code-server/Dockerfile (no push) on changes to the
+# packages it bundles. There's no equivalent CI check for
+# packages/vura-runner/Dockerfile — that one installs the already-published
+# @vura-data-os/vura-runner npm package by design (see its own header
+# comment), so it can't be exercised until a version is actually published;
+# release-vura-runner.yml is what validates it, at release time.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/code-server/**'
+      - 'packages/core-extension/**'
+      - 'packages/vura-dataverse/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-io/**'
+      - 'packages/vura-runner/**'
+      - 'packages/vura-odata-sync-core/**'
+      - '.github/workflows/ci-code-server.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docker/code-server/**'
+      - 'packages/core-extension/**'
+      - 'packages/vura-dataverse/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-io/**'
+      - 'packages/vura-runner/**'
+      - 'packages/vura-odata-sync-core/**'
+      - '.github/workflows/ci-code-server.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-code-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build image (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/code-server/Dockerfile
+          platforms: linux/amd64
+          push: false

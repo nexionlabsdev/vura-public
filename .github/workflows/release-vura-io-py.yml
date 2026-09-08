@@ -1,0 +1,80 @@
+name: Release vura-io-py (PyPI)
+
+# Independent release for the PyPI package "vura-io" (Python counterpart of
+# @vura-data-os/vura-io — same schemas/*.json contract, copied in by
+# scripts/copy-schemas.js before build, see packages/vura-io-py/README.md).
+# Trigger by pushing a tag like `vura-io-py@1.2.3`.
+#
+# Uses PyPI OIDC trusted publishing via pypa/gh-action-pypi-publish — no API
+# token secret needed. One-time setup on pypi.org: the "vura-io" project ->
+# Publishing -> Add a new publisher -> GitHub, Repository = this repo,
+# Workflow name = `release-vura-io-py.yml`, Environment name = `pypi` (must
+# match the `environment:` below).
+on:
+  push:
+    tags:
+      - 'vura-io-py@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish vura-io to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi # must match the Trusted Publisher's Environment name on pypi.org
+    permissions:
+      id-token: write # required for PyPI OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#vura-io-py@}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set version to ${{ steps.resolve.outputs.version }}
+        run: sed -i "s/^version = \".*\"/version = \"${{ steps.resolve.outputs.version }}\"/" packages/vura-io-py/pyproject.toml
+
+      # Copies schemas/*.json into vura/io/schemas so it's included in the
+      # built wheel/sdist — see schemas.py and scripts/copy-schemas.js.
+      - name: Sync schemas contract into vura-io-py
+        run: node scripts/copy-schemas.js
+
+      - name: Install test dependencies and vura-io-py itself
+        run: |
+          cd packages/vura-io-py
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Test vura-io-py
+        run: cd packages/vura-io-py && python -m unittest discover -s tests -v
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          cd packages/vura-io-py
+          python -m build --outdir dist
+
+      - name: Publish (skips any artifact already on PyPI)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/vura-io-py/dist
+          skip-existing: true

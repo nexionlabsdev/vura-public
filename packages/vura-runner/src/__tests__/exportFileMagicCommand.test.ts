@@ -5,7 +5,7 @@ import { DuckDbManager } from '../services/duckDbManager';
 import { CliEnvironment } from '../cliEnvironment';
 import { handleTerminal } from '../handlers/terminalHandler';
 const { generateExportBuffer, handleFileExport } = require('../handlers/fileExportHandler');
-const { data } = require('@vura/io');
+const { data } = require('@vura-data-os/vura-io');
 
 describe('Phase 8: !export-file magic command & file export handler', () => {
     let tempDir: string;

@@ -1,0 +1,85 @@
+name: Release vura-odata-sync-core
+
+# Independent release for @vura-data-os/vura-odata-sync-core. Trigger by
+# pushing a tag like `vura-odata-sync-core@1.2.3` — this repo's packages are
+# versioned and released independently, not in lockstep.
+#
+# Its own @vura-data-os/core-sdk dependency range in package.json is left
+# untouched here — it resolves against whatever's already published,
+# independent of this release.
+#
+# Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed. One-time
+# setup on npmjs.com: @vura-data-os/vura-odata-sync-core -> Package Settings
+# -> Trusted Publisher -> GitHub Actions, Repository = this repo, Workflow
+# filename = `release-vura-odata-sync-core.yml`.
+on:
+  push:
+    tags:
+      - 'vura-odata-sync-core@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @vura-data-os/vura-odata-sync-core to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#vura-odata-sync-core@}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ steps.resolve.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/vura-odata-sync-core/package.json', 'utf8'));
+            pkg.version = '${{ steps.resolve.outputs.version }}';
+            fs.writeFileSync('packages/vura-odata-sync-core/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Build core-sdk
+        run: npm run compile --workspace=packages/core-sdk
+      - name: Build and test vura-odata-sync-core
+        run: |
+          npm run compile --workspace=packages/vura-odata-sync-core
+          npm test --workspace=packages/vura-odata-sync-core
+
+      - name: Publish (skips if this version is already on npm)
+        run: |
+          set -e
+          cd packages/vura-odata-sync-core
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+          else
+            echo "Publishing $NAME@$VERSION..."
+            npm publish --access public --provenance
+          fi

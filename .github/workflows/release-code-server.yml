@@ -1,0 +1,89 @@
+name: Release code-server image
+
+# Independent release for the code-server image (ghcr.io/nexionlabsdev/
+# vura-code-server, optionally also Docker Hub) — codercom/code-server with
+# core-extension and vura-dataverse pre-installed, see
+# docker/code-server/Dockerfile. Trigger by pushing a tag like
+# `code-server@1.2.3`.
+#
+# Builds both .vsix's from THIS commit's own source (same
+# install-local-deps.sh/package-extension.sh path the standalone
+# core-extension/vura-dataverse releases use) — independent of whether
+# those packages have a tagged release out.
+#
+# GHCR needs no extra secrets (uses the job's own GITHUB_TOKEN). Docker Hub
+# push is optional — skipped, not failed, if these secrets are unset:
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+on:
+  push:
+    tags:
+      - 'code-server@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    name: Build and push code-server image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # required to push to ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#code-server@}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # linux/amd64 only for now — core-extension's packaged .vsix bundles
+      # whatever native duckdb.node the packaging runner resolved (see
+      # scripts/copy-duckdb-vendor.js), and this build doesn't cross-compile
+      # that per target platform. Add linux/arm64 once a vendored arm64
+      # duckdb.node binary (or a per-arch build matrix) is in place.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: tags
+        run: |
+          VERSION="${{ steps.resolve.outputs.version }}"
+          TAGS="ghcr.io/nexionlabsdev/vura-code-server:${VERSION},ghcr.io/nexionlabsdev/vura-code-server:latest"
+          if [[ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]]; then
+            TAGS="${TAGS},nexionlabsdev/vura-code-server:${VERSION},nexionlabsdev/vura-code-server:latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/code-server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}

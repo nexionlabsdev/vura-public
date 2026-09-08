@@ -1,0 +1,175 @@
+name: Release vura-dataverse
+
+# Independent release for vura-dataverse — published to both npm (for
+# vura-runner's requiredPlugins/vura.plugins loading) and the VS Code
+# Marketplace (as a .vsix), from the same package. Trigger by pushing a tag
+# like `vura-dataverse@1.2.3`.
+#
+# Both jobs below build from THIS commit's own source via
+# scripts/install-local-deps.sh (tarball overlay of core-sdk and
+# vura-odata-sync-core, built fresh from the repo) rather than depending on
+# whatever those packages currently have published — that's what makes this
+# release independent of core-sdk/vura-odata-sync-core's own release cadence.
+# vura-dataverse's package.json dependency ranges (e.g. "^1.0.0") are left
+# untouched; real consumers resolve them against the registry themselves.
+#
+# npm publishing uses OIDC trusted publishing — no NPM_TOKEN secret needed.
+# One-time setup on npmjs.com: @vura-data-os/vura-dataverse -> Package
+# Settings -> Trusted Publisher -> GitHub Actions, Repository = this repo,
+# Workflow filename = `release-vura-dataverse.yml`.
+#
+# Optional secrets (skipped, not failed, if unset):
+#   VSCE_PAT   — Azure DevOps PAT for VS Code Marketplace publishing.
+#   OVSX_PAT   — Open VSX Registry publishing token.
+on:
+  push:
+    tags:
+      - 'vura-dataverse@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            TAG="vura-dataverse@${VERSION}"
+          else
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#vura-dataverse@}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  publish-npm:
+    name: Publish @vura-data-os/vura-dataverse to npm
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ needs.resolve-version.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/vura-dataverse/package.json', 'utf8'));
+            pkg.version = '${{ needs.resolve-version.outputs.version }}';
+            fs.writeFileSync('packages/vura-dataverse/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Build (via local tarball overlay — see workflow header comment)
+        run: ./scripts/install-local-deps.sh vura-dataverse
+
+      - name: Compile and test
+        run: cd packages/vura-dataverse && npm run compile && npm test
+
+      - name: Publish (skips if this version is already on npm)
+        run: |
+          set -e
+          cd packages/vura-dataverse
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+          else
+            echo "Publishing $NAME@$VERSION..."
+            npm publish --access public --provenance
+          fi
+
+  package-vsix:
+    name: Package vura-dataverse .vsix
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ needs.resolve-version.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/vura-dataverse/package.json', 'utf8'));
+            pkg.version = '${{ needs.resolve-version.outputs.version }}';
+            fs.writeFileSync('packages/vura-dataverse/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Build (via local tarball overlay — see workflow header comment)
+        run: ./scripts/install-local-deps.sh vura-dataverse
+
+      # No --target: vura-dataverse has no native dependencies, so one
+      # universal .vsix covers every platform.
+      - name: Package
+        run: ./scripts/package-extension.sh vura-dataverse -o dist/vura-dataverse.vsix
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ env.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish --packagePath dist/vura-dataverse.vsix --pat "$VSCE_PAT"
+
+      - name: Publish to Open VSX
+        if: ${{ env.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx publish dist/vura-dataverse.vsix --pat "$OVSX_PAT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vura-dataverse-vsix
+          path: dist/vura-dataverse.vsix
+
+  github-release:
+    name: Create GitHub Release
+    needs: [resolve-version, publish-npm, package-vsix]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vura-dataverse-vsix
+          path: dist
+
+      - name: Create release and attach the .vsix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.resolve-version.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --title "vura-dataverse v${{ needs.resolve-version.outputs.version }}" \
+            --generate-notes \
+            dist/vura-dataverse.vsix

@@ -10,9 +10,16 @@ except ImportError:
 
 
 def get_schema_dir_path() -> Path:
-    # Check relative locations from current file and repository root
     current_file = Path(__file__).resolve()
     candidates = [
+        # Package-local copy — ships inside the package itself (see
+        # scripts/copy-schemas.js, run before packaging/testing), so this
+        # resolves correctly whether vura-io is pip-installed as a real
+        # dependency (site-packages/vura/io/schemas) or run in place in the
+        # monorepo (packages/vura-io-py/vura/io/schemas).
+        current_file.parent / "schemas",
+        # Monorepo-root fallback, for running straight from a checkout
+        # before the copy step above has ever run.
         current_file.parents[4] / "schemas",
         current_file.parents[3] / "schemas",
         Path.cwd() / "schemas",

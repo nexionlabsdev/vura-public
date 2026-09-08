@@ -62,7 +62,7 @@ if (core) {
 
 **Registering in `vura-runner` (CLI)** — publish your Add-on as its own package with a **default export**, then either declare it in a notebook's `requiredPlugins`, or globally: `vura-runner config set vura.plugins '["my-custom-adapter-plugin"]'`.
 
-See the [SDK Guide](https://github.com/nexionlabsdev/vura-public/blob/main/docs/sdk_guide.md) and [Dataverse Integration](https://github.com/nexionlabsdev/vura-public/blob/main/docs/dataverse_integration.md) (a reference implementation split into `vura-dataverse-sync-core` + `vura-dataverse-adapter` + `vura-dataverse-runner-plugin`) in the main repo for the full walkthrough.
+See the [SDK Guide](https://github.com/nexionlabsdev/vura-public/blob/main/docs/sdk_guide.md) and [Dataverse Integration](https://github.com/nexionlabsdev/vura-public/blob/main/docs/dataverse_integration.md) (a reference implementation — the single `vura-dataverse` package) in the main repo for the full walkthrough.
 
 ## License
 

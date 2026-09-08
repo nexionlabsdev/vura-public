@@ -5,10 +5,7 @@
   "workspaces": [
     "packages/core-sdk",
     "packages/vura-odata-sync-core",
-    "packages/vura-dataverse",
-    "packages/vura-dataverse-sync-core",
     "packages/vura-runner",
-    "packages/vura-dataverse-runner-plugin",
     "packages/vura-sharepoint",
     "packages/vura-io"
   ],

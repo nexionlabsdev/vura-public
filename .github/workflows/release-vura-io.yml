@@ -1,0 +1,85 @@
+name: Release vura-io (npm)
+
+# Independent release for @vura-data-os/vura-io (the TypeScript sidecar data
+# library — not to be confused with vura-io-py, its Python counterpart,
+# released separately via release-vura-io-py.yml, and published to PyPI
+# under the unscoped name "vura-io"). Trigger by pushing a tag like
+# `vura-io@1.2.3`.
+#
+# vura-runner depends on @vura-data-os/vura-io as a real npm dependency, so
+# this must be published before a vura-runner release that needs a newer
+# version of it.
+#
+# Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed. One-time
+# setup on npmjs.com: @vura-data-os/vura-io -> Package Settings -> Trusted
+# Publisher -> GitHub Actions, Repository = this repo, Workflow filename =
+# `release-vura-io.yml`.
+on:
+  push:
+    tags:
+      - 'vura-io@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @vura-data-os/vura-io to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#vura-io@}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ steps.resolve.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/vura-io/package.json', 'utf8'));
+            pkg.version = '${{ steps.resolve.outputs.version }}';
+            fs.writeFileSync('packages/vura-io/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Build and test vura-io
+        run: |
+          npm run compile --workspace=packages/vura-io
+          npm test --workspace=packages/vura-io
+
+      - name: Publish (skips if this version is already on npm)
+        run: |
+          set -e
+          cd packages/vura-io
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+          else
+            echo "Publishing $NAME@$VERSION..."
+            npm publish --access public --provenance
+          fi

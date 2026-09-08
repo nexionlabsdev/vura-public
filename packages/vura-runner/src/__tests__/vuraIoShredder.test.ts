@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { data, state, metrics, shredJson, unshredJson } from '@vura/io';
+import { data, state, metrics, shredJson, unshredJson } from '@vura-data-os/vura-io';
 import { DuckDbManager } from '../services/duckDbManager';
 
 describe('VURA I/O & Relational DuckDB JSON Shredder', () => {

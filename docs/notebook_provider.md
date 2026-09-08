@@ -53,7 +53,7 @@ The Controller is responsible for actually running the code within the cells.
 1. **Trigger:** The user clicks "Run Cell" or "Run All".
 2. **Execution Task:** VS Code creates a `NotebookCellExecution` task for each executed cell.
 3. **Routing & Execution:**
-   - **Terminal Commands (`vura-terminal` / `shellscript`)**: Handled via `_executeTerminal()`. For each `!` line, checks `!clean_session`/`!ingest-file` built-ins or the shared `ProviderRegistry` (from `core-sdk`) for a registered Add-on handling that command (e.g., `!sync_dataverse`) and dispatches to its `handleCommand()`; anything unrecognized falls back to a raw shell command.
+   - **Terminal Commands (`vura-terminal` / `shellscript`)**: Handled via `_executeTerminal()`. For each `!` line, checks `!clean_session`/`!ingest-file` built-ins or the shared `ProviderRegistry` (from `core-sdk`) for a registered Add-on handling that command (e.g., `!dataverse.sync`) and dispatches to its `handleCommand()`; anything unrecognized falls back to a raw shell command.
    - **Code Cells (`sql`, `python`, `javascript`, `html`, etc.)**: Delegated to `VuraRunner.executeCell()` / `runner.executeNotebook()` from `@vura-data-os/vura-runner`.
 4. **Environment & Logging:** The controller wraps VS Code APIs using `VsCodeEnvironment` and `VsCodeCellLogger`. `VuraRunner` executes cell logic via shared language handlers and writes logs/outputs back to VS Code's execution task through `VsCodeCellLogger`.
 

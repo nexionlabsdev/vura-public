@@ -14,8 +14,15 @@ export interface LoadedSchemas {
 }
 
 export function getSchemaDirPath(): string {
-  // Check relative paths from both src/ and compiled dist/ locations
   const candidates = [
+    // Package-local copy — ships inside the package itself (see
+    // scripts/copy-schemas.js, run before `tsc` by this package's compile/
+    // build/test scripts), so this resolves correctly whether vura-io is
+    // installed as a real npm dependency (node_modules/@vura-data-os/vura-io/schemas) or
+    // built in place in the monorepo (packages/vura-io/schemas).
+    path.resolve(__dirname, '../schemas'),
+    // Monorepo-root fallback, for running straight against src/ (e.g.
+    // ts-jest) before the copy step above has ever run.
     path.resolve(__dirname, '../../../schemas'),
     path.resolve(__dirname, '../../schemas'),
     path.resolve(process.cwd(), 'schemas')

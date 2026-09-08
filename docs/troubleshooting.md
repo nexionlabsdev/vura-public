@@ -74,7 +74,7 @@ flowchart TD
 
 ### Add-on Registration Issues
 
-**Symptom:** `!sync_dataverse` or custom magic commands are not recognized — they run as a raw shell command and fail with "command not found" (or worse, silently execute as an unintended shell command if the syntax happens to contain shell metacharacters like `>`).
+**Symptom:** `!dataverse.sync` or custom magic commands are not recognized — they run as a raw shell command and fail with "command not found" (or worse, silently execute as an unintended shell command if the syntax happens to contain shell metacharacters like `>`).
 
 That symptom means `ProviderRegistry.getProviderForCommand()` found no match — the Add-on was never registered, in whichever host you're using:
 
@@ -83,7 +83,7 @@ flowchart TD
     S([Command Not Recognized]) --> H{VS Code or CLI?}
 
     H -->|VS Code| Q1{Add-on extension\ninstalled?}
-    Q1 -->|No| A1[Install the Add-on extension\ne.g. vura-dataverse-adapter]
+    Q1 -->|No| A1[Install the Add-on extension\ne.g. vura-dataverse]
     Q1 -->|Yes| Q2{Core extension active?}
     Q2 -->|No| A2[Reload VS Code window\nCtrl+Shift+P → Reload Window]
     Q2 -->|Yes| Q3{getCommands returns\nthe command?}
