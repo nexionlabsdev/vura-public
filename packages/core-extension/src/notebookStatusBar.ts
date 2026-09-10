@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { ProviderRegistry, FlownbCell, UIAction } from '@vura-data-os/core-sdk';
 import { ConnectionManager } from './connectionManager';
 import { handleGridExport } from './notebook/exportHandler';
 import { handleGraphPdfExport } from './notebook/pdfExportHandler';
@@ -7,7 +8,6 @@ import { safeRegisterCommand } from './commandUtils';
 
 const VENV_KEY = 'vura-notebook-pythonVenv';
 
-/** Persistent status bar item that always shows the active venv. */
 let _venvStatusBar: vscode.StatusBarItem | undefined;
 
 function updateVenvStatusBar(context: vscode.ExtensionContext) {
@@ -23,7 +23,6 @@ function updateVenvStatusBar(context: vscode.ExtensionContext) {
         _venvStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
 }
-
 
 export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarItemProvider {
     constructor(private context: vscode.ExtensionContext) {}
@@ -72,10 +71,8 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                 items.push(connectionItem);
             }
 
-
             // Data Grid Export
             if (cell.outputs.length > 0 && (cell.document.languageId === 'sql' || cell.metadata?.vuraType === 'table' || cell.metadata?.tableName)) {
-                const tableName = cell.metadata?.tableName || `cell_${cell.index}`;
                 const exportItem = new vscode.NotebookCellStatusBarItem(
                     '$(export) Export Data',
                     vscode.NotebookCellStatusBarAlignment.Left
@@ -88,8 +85,7 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                 items.push(exportItem);
             }
 
-
-            // File Ingestion
+            // File Ingestion & File Export
             if (cell.document.languageId === 'vura-terminal') {
                 const ingestItem = new vscode.NotebookCellStatusBarItem(
                     '$(file-directory) Ingest Local File',
@@ -101,7 +97,49 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                     arguments: [cell]
                 };
                 items.push(ingestItem);
+
+                const exportItem = new vscode.NotebookCellStatusBarItem(
+                    '$(export) Export File',
+                    vscode.NotebookCellStatusBarAlignment.Left
+                );
+                exportItem.command = {
+                    title: 'Export File',
+                    command: 'vura-notebook.exportFileCommand',
+                    arguments: [cell]
+                };
+                items.push(exportItem);
             }
+
+            // Dynamic UI Actions from registered IUIActionProviders
+            if (cell.document.languageId === 'vura-terminal' || cell.document.languageId === 'shellscript') {
+                const flownbCell: FlownbCell = {
+                    kind: cell.kind,
+                    language: cell.document.languageId,
+                    value: cell.document.getText(),
+                    metadata: cell.metadata ? { ...cell.metadata } : {}
+                };
+
+                const providers = ProviderRegistry.getInstance().getAllProviders();
+                for (const provider of providers) {
+                    if (typeof (provider as any).getUIActions === 'function') {
+                        const actions: UIAction[] = (provider as any).getUIActions(flownbCell);
+                        for (const action of actions) {
+                            const item = new vscode.NotebookCellStatusBarItem(
+                                action.label,
+                                vscode.NotebookCellStatusBarAlignment.Right
+                            );
+                            item.command = {
+                                title: action.label,
+                                command: 'vura-notebook.executeUIAction',
+                                arguments: [action, cell]
+                            };
+                            item.tooltip = `Click to execute ${action.label}`;
+                            items.push(item);
+                        }
+                    }
+                }
+            }
+
             // Python Path Item
             if (cell.document.languageId === 'python') {
                 const pythonPath = cell.metadata?.pythonPath || 'Select Python Path';
@@ -133,7 +171,6 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                 ctxItem.tooltip = 'Click to select which cell\'s data to use as template context';
                 items.push(ctxItem);
 
-                // PDF/PNG Export for template cells with outputs
                 if (cell.outputs.length > 0) {
                     const exportItem = new vscode.NotebookCellStatusBarItem(
                         '$(export) Export Visual',
@@ -149,8 +186,8 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                 }
             }
 
-            // Terminal Cell: Dataverse Connection Picker
-            if (cell.document.languageId === 'shellscript') {
+            // Dataverse Connection Picker for shellscript/terminal
+            if (cell.document.languageId === 'shellscript' || cell.document.languageId === 'vura-terminal') {
                 const dataverseConnName = cell.metadata?.dataverseConnectionName || 'Select Dataverse Connection';
                 const dataverseConnItem = new vscode.NotebookCellStatusBarItem(
                     `$(cloud) Dataverse: ${dataverseConnName}`,
@@ -167,7 +204,6 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
 
             // Vega-Lite cell status bar items
             if (cell.document.languageId === 'vega-lite') {
-                // Source Picker
                 const sourceLabel = cell.metadata?.graphSourceCellName || 'Select Source';
                 const sourceItem = new vscode.NotebookCellStatusBarItem(
                     `$(graph-line) Vega-Lite | Source: ${sourceLabel}`,
@@ -181,7 +217,6 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                 sourceItem.tooltip = 'Select which JSON Compose cell provides chart data';
                 items.push(sourceItem);
 
-                // Graph Data Path
                 const pathLabel = cell.metadata?.graphDataPath || '(root)';
                 const pathItem = new vscode.NotebookCellStatusBarItem(
                     `$(key) Data: ${pathLabel}`,
@@ -195,7 +230,6 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
                 pathItem.tooltip = 'Optional dot-path to a specific key in the JSON (e.g. "orders" or "dashboard.items")';
                 items.push(pathItem);
 
-                // PDF/PNG Export for graph cells with output
                 if (cell.outputs.length > 0) {
                     const exportItem = new vscode.NotebookCellStatusBarItem(
                         '$(export) Export Visual',
@@ -265,14 +299,41 @@ export class NotebookStatusBarProvider implements vscode.NotebookCellStatusBarIt
 }
 
 export function registerNotebookStatusBarCommands(context: vscode.ExtensionContext) {
-    // --- Venv status bar item (always visible when a notebook is open) ---
     _venvStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
     _venvStatusBar.command = 'vura-notebook.selectVenv';
     context.subscriptions.push(_venvStatusBar);
     updateVenvStatusBar(context);
     _venvStatusBar.show();
 
-    _venvStatusBar.show();
+    // --- Dynamic SDK UI Action execution command ---
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.executeUIAction', async (action: UIAction, cell: vscode.NotebookCell) => {
+        const flownbCell: FlownbCell = {
+            kind: cell.kind,
+            language: cell.document.languageId,
+            value: cell.document.getText(),
+            metadata: cell.metadata ? { ...cell.metadata } : {}
+        };
+
+        let selectedValue: string | undefined = '';
+
+        if (action.kind === 'quickpick' && action.options) {
+            const options = await action.options();
+            selectedValue = await vscode.window.showQuickPick(options, { placeHolder: action.label });
+            if (selectedValue === undefined) return;
+        } else if (action.kind === 'input') {
+            selectedValue = await vscode.window.showInputBox({ prompt: action.label });
+            if (selectedValue === undefined) return;
+        }
+
+        await action.onSelect(selectedValue || '', flownbCell);
+
+        if (flownbCell.value !== cell.document.getText()) {
+            const edit = new vscode.WorkspaceEdit();
+            const fullRange = new vscode.Range(0, 0, cell.document.lineCount, cell.document.lineAt(cell.document.lineCount - 1).text.length);
+            edit.replace(cell.document.uri, fullRange, flownbCell.value);
+            await vscode.workspace.applyEdit(edit);
+        }
+    }));
 
     // --- Flow Control Commands ---
     context.subscriptions.push(safeRegisterCommand('vura-notebook.setGroup', async (cell: vscode.NotebookCell) => {
@@ -346,7 +407,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         } else if (typePick.label === 'Previous cell status') {
             const statusChoice = await vscode.window.showQuickPick(['success', 'error', 'skipped'], { title: 'Run when previous cell is:' });
             if (!statusChoice) return;
-            const targetCellIndex = cell.index; // previous cell is cell.index. And it's 1-based, so cell_${cell.index} refers to the previous cell since cell.index is the 0-based index of the *current* cell, which means its 1-based index is cell.index + 1. The previous cell is cell.index.
+            const targetCellIndex = cell.index;
             condition = `cell_${targetCellIndex}.status == '${statusChoice}'`;
         } else if (typePick.label === 'Specific cell/group status') {
             const target = await vscode.window.showInputBox({ title: 'Enter cell label or "group.group_name"' });
@@ -354,8 +415,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             const statusChoice = await vscode.window.showQuickPick(['success', 'error', 'partial', 'skipped'], { title: 'Status' });
             if (!statusChoice) return;
             condition = `${target}.status == '${statusChoice}'`;
-            // Rollback pattern: firing on group failure means this cell is a rollback handler.
-            // Rollback cells must be in a DIFFERENT group from the cells they monitor or they'll be aborted too.
             if ((statusChoice === 'error' || statusChoice === 'partial') && target.startsWith('group.')) {
                 vscode.window.showInformationMessage(
                     'Rollback pattern detected: make sure this cell is in a DIFFERENT group than the cells it handles. ' +
@@ -369,7 +428,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         }
 
         if (condition !== undefined) {
-            // Show preview
             const confirm = await vscode.window.showQuickPick(['Confirm', 'Cancel'], { title: `Set runWhen to: ${condition}` });
             if (confirm !== 'Confirm') return;
         }
@@ -416,7 +474,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         if (!pick) return;
 
         if (pick.label.includes('Select existing')) {
-            // --- Browse for existing venv ---
             const uris = await vscode.window.showOpenDialog({
                 canSelectFiles: false,
                 canSelectFolders: true,
@@ -426,7 +483,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             if (!uris || uris.length === 0) return;
             const selected = uris[0].fsPath;
 
-            // Validate it looks like a real venv
             const pythonBin = isWin
                 ? path.join(selected, 'Scripts', 'python.exe')
                 : path.join(selected, 'bin', 'python');
@@ -446,7 +502,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             vscode.window.showInformationMessage(`Python venv set to: ${path.basename(selected)}`);
 
         } else if (pick.label.includes('Create new')) {
-            // --- Pick a parent folder, then a name ---
             const parentUris = await vscode.window.showOpenDialog({
                 canSelectFiles: false,
                 canSelectFolders: true,
@@ -481,12 +536,12 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             });
 
             await context.workspaceState.update(VENV_KEY, venvPath);
-            // Reset deps-installed flag so baseline packages get installed on next run
             await context.workspaceState.update(`vura-python-deps-${venvPath}`, undefined);
             updateVenvStatusBar(context);
             vscode.window.showInformationMessage(`Created and activated venv: ${venvName}`);
         }
     }));
+
     context.subscriptions.push(safeRegisterCommand('vura-notebook.setTableName', async (cell: vscode.NotebookCell) => {
         const defaultName = cell.metadata?.tableName || `cell_${cell.index}`;
         const newName = await vscode.window.showInputBox({
@@ -536,7 +591,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             edit.set(cell.notebook.uri, [notebookEdit]);
             await vscode.workspace.applyEdit(edit);
 
-            // Also update workspace default
             context.workspaceState.update('vura-notebook-pythonPath', selectedPath);
         }
     }));
@@ -576,7 +630,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         });
         if (!operation) return;
 
-        // Fetch entities for QuickPick
         const connectionId = cell.metadata?.connectionId;
         if (!connectionId || connectionId === 'local') {
             vscode.window.showErrorMessage('Select an active Dataverse Connection Profile in the cell status bar first.');
@@ -683,16 +736,65 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await vscode.workspace.applyEdit(edit);
     }));
 
-    // --- HTML Template Cell Commands ---
+    context.subscriptions.push(safeRegisterCommand('vura-notebook.exportFileCommand', async (cell: vscode.NotebookCell) => {
+        const notebook = cell.notebook;
+        const knownTables = new Set<string>();
+        for (let i = 0; i < notebook.cellCount; i++) {
+            const c = notebook.cellAt(i);
+            const tbl = c.metadata?.tableName || `cell_${c.index}`;
+            knownTables.add(tbl);
+        }
+
+        const pickItems: vscode.QuickPickItem[] = Array.from(knownTables).map(t => ({ label: t, description: 'Table from notebook cell' }));
+        pickItems.unshift({ label: '$(edit) Enter custom table name...', description: 'Specify a table name manually' });
+
+        const selectedSource = await vscode.window.showQuickPick(pickItems, {
+            placeHolder: 'Select Source Table to Export'
+        });
+
+        if (!selectedSource) return;
+
+        let sourceTable = selectedSource.label;
+        if (selectedSource.label.includes('Enter custom table name')) {
+            const customName = await vscode.window.showInputBox({
+                prompt: 'Enter source table name'
+            });
+            if (!customName) return;
+            sourceTable = customName.trim();
+        }
+
+        const formatOptions = ['xlsx', 'csv', 'json', 'parquet'];
+        const selectedFormat = await vscode.window.showQuickPick(formatOptions, {
+            placeHolder: 'Select Export Format'
+        });
+
+        if (!selectedFormat) return;
+
+        const defaultTargetName = `${sourceTable.replace(/[^a-zA-Z0-9_]/g, '_')}_export`;
+        const outputTable = await vscode.window.showInputBox({
+            prompt: 'Enter target output table name',
+            value: defaultTargetName
+        });
+
+        if (!outputTable) return;
+
+        const srcParam = sourceTable.includes(' ') ? `"${sourceTable}"` : sourceTable;
+        const outParam = outputTable.includes(' ') ? `"${outputTable}"` : outputTable;
+
+        const magicCommand = `!export-file ${srcParam} ${selectedFormat} -> ${outParam}\n`;
+
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(cell.document.uri, new vscode.Position(0, 0), magicCommand);
+        await vscode.workspace.applyEdit(edit);
+    }));
 
     context.subscriptions.push(safeRegisterCommand('vura-notebook.setTemplateContext', async (cell: vscode.NotebookCell) => {
-        // Collect table names from all prior cells in the same notebook
         const notebook = cell.notebook;
         const pickItems: vscode.QuickPickItem[] = [{ label: 'None', description: 'No data context (static HTML)' }];
 
         for (let i = 0; i < notebook.cellCount; i++) {
             const c = notebook.cellAt(i);
-            if (c.index >= cell.index) break; // Only prior cells
+            if (c.index >= cell.index) break;
             const tbl = c.metadata?.tableName || `cell_${c.index}`;
             const lang = c.document.languageId;
             pickItems.push({
@@ -737,11 +839,8 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         await handleGraphPdfExport(htmlContent, storagePath, context);
     }));
 
-    // --- Terminal Cell Commands ---
-
     context.subscriptions.push(safeRegisterCommand('vura-notebook.setDataverseConnection', async (cell: vscode.NotebookCell) => {
         const profiles = ConnectionManager.getProfiles(context);
-        // Filter to profiles that support OData (ServicePrincipal)
         const dataverseProfiles = profiles.filter(p => p.authMode === 'ServicePrincipal');
 
         if (dataverseProfiles.length === 0) {
@@ -774,17 +873,13 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
         }
     }));
 
-    // --- JSON / Graph Cell Commands ---
-
-
     context.subscriptions.push(safeRegisterCommand('vura-notebook.setGraphSource', async (cell: vscode.NotebookCell) => {
         const notebook = cell.notebook;
         const pickItems: vscode.QuickPickItem[] = [];
 
         for (let i = 0; i < notebook.cellCount; i++) {
             const c = notebook.cellAt(i);
-            if (c.index >= cell.index) break; // Only prior cells
-            // Only show JSON compose cells (json language without vega-graph vuraType)
+            if (c.index >= cell.index) break;
             if (c.document.languageId === 'json') {
                 const tbl = c.metadata?.tableName || `cell_${c.index}`;
                 pickItems.push({
@@ -805,7 +900,6 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
 
         if (!selected) return;
 
-        // Find the source cell index
         let sourceCellIndex = -1;
         for (let i = 0; i < notebook.cellCount; i++) {
             const c = notebook.cellAt(i);
@@ -835,7 +929,7 @@ export function registerNotebookStatusBarCommands(context: vscode.ExtensionConte
             placeHolder: 'e.g. orders'
         });
 
-        if (newPath === undefined) return; // Cancelled
+        if (newPath === undefined) return;
 
         const edit = new vscode.WorkspaceEdit();
         const newMetadata = { ...(cell.metadata || {}), graphDataPath: newPath || undefined };

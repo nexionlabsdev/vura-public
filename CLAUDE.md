@@ -5,7 +5,7 @@
 **VURA** is an engineer-native notebook platform: ingest from any source, transform with code, and deliver to files, databases, APIs, or stakeholder reports — all from one notebook. This repository is the **open-source core**:
 - A VS Code extension that renders `.flownb` notebooks with SQL, Python, JavaScript, and HTML cells
 - An embedded DuckDB engine as the shared-memory data layer
-- A Dynamics 365 / OData integration, split into a shared sync engine (`vura-dataverse-sync-core`) and two thin host wrappers — a VS Code add-on (`vura-dataverse-adapter`) and a `vura-runner` CLI plugin (`vura-dataverse-runner-plugin`) — as a reference implementation of the add-on SDK
+- A Dynamics 365 / OData integration (`vura-dataverse`) — a single package published to both npm (as a `vura-runner` CLI plugin) and the VS Code Marketplace (as an add-on extension) from the same compiled output — as a reference implementation of the add-on SDK
 - A standalone CLI (`vura-runner`) for executing `.flownb` notebooks outside VS Code
 
 The system is a **micro-kernel + plugin model**: `core-extension` (VS Code) and `vura-runner` (CLI) are both kernels sharing one contract. `ProviderRegistry` and the `IVuraProvider` interface live in `core-sdk` (not either kernel), so the same Add-on class can register with whichever host loads it. In VS Code, Add-ons are separate extensions that call `api.registerProvider(...)` on activation. In the CLI, plugin packages are loaded by name — either declared by the notebook itself (`requiredPlugins` in the `.flownb` document) or globally via `vura-runner config set vura.plugins '[...]'` — and dispatched the same way through `ProviderRegistry.getProviderForCommand()` before falling back to a raw shell command.
@@ -22,9 +22,7 @@ vura/
 │   ├── core-extension/       # VS Code extension — notebook UI, DuckDB, cell routing
 │   ├── core-sdk/             # Shared TypeScript SDK: IVuraProvider, ProviderRegistry, FlownbCell,
 │   │                         # ICellLogger, IVuraEnvironment, BaseAdapter — used by both kernels and all add-ons
-│   ├── vura-dataverse-sync-core/       # Host-agnostic Dataverse $batch sync engine (no vscode dependency)
-│   ├── vura-dataverse-adapter/         # VS Code add-on wrapping vura-dataverse-sync-core
-│   ├── vura-dataverse-runner-plugin/   # vura-runner CLI plugin wrapping vura-dataverse-sync-core
+│   ├── vura-dataverse/        # Unified Dataverse $batch sync add-on — one package, npm + VS Code Marketplace
 │   └── vura-runner/          # Standalone CLI/engine for executing .flownb notebooks
 ├── docs/                     # Architecture and developer documentation
 ├── samples/                  # Example .flownb notebooks
@@ -73,8 +71,8 @@ make build-windows   # win32-x64 and win32-arm64
 .flownb notebook
   └─ NotebookController (packages/core-extension/src/notebookController.ts)
        ├─ SQL cells        → sqlService.ts (TDS/MSSQL, multi-auth)
-       ├─ Python cells     → Python gRPC sidecar
-       ├─ JavaScript cells → Node gRPC sidecar
+       ├─ Python cells     → Python stdio/JSON sidecar
+       ├─ JavaScript cells → Node stdio/JSON sidecar
        ├─ HTML cells       → templateHandler.ts (Vega-Lite, PDF export)
        └─ !magic commands  → ProviderRegistry.getProviderForCommand() → IVuraProvider.handleCommand()
 ```
@@ -89,10 +87,10 @@ make build-windows   # win32-x64 and win32-arm64
 // In an add-on's activate():
 const coreExt = vscode.extensions.getExtension('nexion-labs.vura-core');
 const api = coreExt.exports;
-api.registerProvider('vura-dataverse-adapter', myProvider);
+api.registerProvider('vura-dataverse', myProvider);
 ```
 
-**vura-runner (CLI):** there's no extension host, so plugin packages are loaded explicitly by name — either declared by the notebook itself (`requiredPlugins: ["@vura-data-os/vura-dataverse-runner-plugin"]` in the `.flownb` document) or globally via `vura-runner config set vura.plugins '["@vura-data-os/vura-dataverse-runner-plugin"]'`. `pluginLoader.ts` `require()`s each package's default export and registers it the same way, before the notebook's cells run.
+**vura-runner (CLI):** there's no extension host, so plugin packages are loaded explicitly by name — either declared by the notebook itself (`requiredPlugins: ["@vura-data-os/vura-dataverse"]` in the `.flownb` document) or globally via `vura-runner config set vura.plugins '["@vura-data-os/vura-dataverse"]'`. `pluginLoader.ts` `require()`s each package's default export and registers it the same way, before the notebook's cells run.
 
 ### Data Bridge (Zero-Copy IPC)
 
@@ -113,9 +111,8 @@ Parquet files let Python, Node, and SQL cells share data without JSON serializat
 | `packages/core-sdk/src/providerRegistry.ts` | Add-on lifecycle registry (singleton), shared by both hosts |
 | `packages/core-sdk/src/baseAdapter.ts` | `BaseAdapter` — secret-storage helpers over `IVuraEnvironment` |
 | `packages/core-sdk/src/flattener.ts` | Auto-schema JSON → Parquet flattener |
-| `packages/vura-dataverse-sync-core/src/syncDataverseHandler.ts` | Host-agnostic Dataverse OData `$batch` sync engine |
-| `packages/vura-dataverse-adapter/src/provider_dataverse.ts` | VS Code `IVuraProvider` wrapper around `vura-dataverse-sync-core` |
-| `packages/vura-dataverse-runner-plugin/src/index.ts` | CLI `IVuraProvider` wrapper around `vura-dataverse-sync-core` |
+| `packages/vura-dataverse/src/syncDataverseHandler.ts` | Host-agnostic Dataverse OData `$batch` sync engine |
+| `packages/vura-dataverse/src/index.ts` | `IVuraProvider` implementation — `main` for the VS Code extension and the default export loaded as a CLI plugin |
 | `packages/vura-runner/src/runner.ts` | Standalone notebook execution engine |
 | `packages/vura-runner/src/cli.ts` | CLI entry point |
 | `packages/vura-runner/src/pluginLoader.ts` | Loads/registers CLI plugin packages into `ProviderRegistry` |
@@ -137,7 +134,7 @@ Parquet files let Python, Node, and SQL cells share data without JSON serializat
 
 ### Magic Commands
 
-Cells with `!` prefix (e.g., `!sync_dataverse --source my_table --target accounts`, `!npm install`) are checked against `ProviderRegistry.getProviderForCommand()` (matching against each registered provider's `getCommands()`); a match is dispatched to that provider's `handleCommand()`. Anything unrecognized falls back to a raw shell command — so an Add-on's magic commands must be registered (VS Code: the extension installed and activated; CLI: the plugin loaded via `requiredPlugins` or `vura.plugins`) before they'll resolve to real logic instead of a shell "command not found".
+Cells with `!` prefix (e.g., `!dataverse.sync --source my_table --target accounts`, `!npm install`) are checked against `ProviderRegistry.getProviderForCommand()` (matching against each registered provider's `getCommands()`); a match is dispatched to that provider's `handleCommand()`. Anything unrecognized falls back to a raw shell command — so an Add-on's magic commands must be registered (VS Code: the extension installed and activated; CLI: the plugin loaded via `requiredPlugins` or `vura.plugins`) before they'll resolve to real logic instead of a shell "command not found".
 
 ---
 
@@ -161,7 +158,7 @@ refactor: extract batch-chunking logic from syncDataverseHandler
 // packages/core-sdk/src/interfaces.ts
 interface IVuraProvider {
   activate(env: IVuraEnvironment): Promise<void>;
-  getCommands(): string[];      // e.g. ['!sync_dataverse']
+  getCommands(): string[];      // e.g. ['!dataverse.sync']
   getSettings(): any;
   handleCommand(
     commandRoot: string,

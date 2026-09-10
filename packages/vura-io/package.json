@@ -1,19 +1,29 @@
 {
-  "name": "@vura/io",
+  "name": "@vura-data-os/vura-io",
   "version": "1.0.0",
   "description": "VURA I/O library for state management, metrics, and DuckDB relational JSON shredding",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "schemas"
+  ],
   "scripts": {
-    "build": "tsc",
-    "compile": "tsc",
+    "build": "node ../../scripts/copy-schemas.js && tsc",
+    "compile": "node ../../scripts/copy-schemas.js && tsc",
+    "test": "node ../../scripts/copy-schemas.js && jest",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
+    "ajv": "^8.17.1",
     "apache-arrow": "^21.2.0"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^18.19.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
     "typescript": "^5.9.3"
   },
   "license": "AGPL-3.0"

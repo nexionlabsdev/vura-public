@@ -2,11 +2,11 @@
 
 The core VS Code extension for [VURA](https://github.com/nexionlabsdev/vura-public) — an engineer-native notebook platform uniting SQL, Python, JavaScript, and HTML in one `.flownb` notebook, backed by an embedded DuckDB/Parquet bridge.
 
-This is the **kernel** in VURA's micro-kernel architecture: it renders `.flownb` notebooks, runs SQL/Python/JavaScript/HTML cells, and exposes a `ProviderRegistry` (from `@vura-data-os/core-sdk`) that separate Add-on extensions — like `vura-dataverse-adapter` — register into to add their own magic commands.
+This is the **kernel** in VURA's micro-kernel architecture: it renders `.flownb` notebooks, runs SQL/Python/JavaScript/HTML cells, and exposes a `ProviderRegistry` (from `@vura-data-os/core-sdk`) that separate Add-on extensions — like `vura-dataverse` — register into to add their own magic commands.
 
 ## Features
 
-- **Polyglot notebook cells** — SQL (multi-auth TDS/MSSQL), Python and JavaScript (via gRPC sidecars sharing data through DuckDB/Parquet, zero-copy), HTML (Vega-Lite charts, PDF export), and `vura-terminal` for `!magic commands`.
+- **Polyglot notebook cells** — SQL (multi-auth TDS/MSSQL), Python and JavaScript (via stdio/JSON sidecars communicating over stdin/stdout and sharing data through DuckDB/Parquet, zero-copy), HTML (Vega-Lite charts, PDF export), and `vura-terminal` for `!magic commands`. An earlier design used Apache Arrow Flight (gRPC-based) for sidecar communication; this was replaced with local stdio/JSON specifically for VS Code extension and Windows compatibility.
 - **Connection management** — SQL connection profiles across four auth modes (Service Principal, Device Code, SQL Login, Windows Auth), stored in VS Code's `globalState`/`SecretStorage`.
 - **Auto-Schema Flattener** — ingest nested JSON/CSV/Excel/Parquet files directly into relational DuckDB tables via `!ingest-file`.
 - **Query history and schema explorer** — dedicated sidebar views for SQL connections.

@@ -7,13 +7,31 @@ name = "vura-io"
 version = "1.0.0"
 description = "VURA I/O library for state management, metrics, and DuckDB relational JSON shredding"
 readme = "README.md"
+license = "AGPL-3.0-or-later"
+authors = [
+    { name = "Nexion Labs", email = "info@nexionlabs.dev" }
+]
+keywords = ["vura", "data-os", "duckdb", "notebook", "sidecar"]
 requires-python = ">=3.8"
 dependencies = [
     "pandas>=2.1.0",
     "pyarrow>=15.0.0",
-    "duckdb>=1.0.0"
+    "duckdb>=1.0.0",
+    "jsonschema>=4.0.0"
 ]
+
+[project.urls]
+Homepage = "https://github.com/nexionlabsdev/vura-public/tree/main/packages/vura-io-py"
+Repository = "https://github.com/nexionlabsdev/vura-public"
+Issues = "https://github.com/nexionlabsdev/vura-public/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["vura*"]
+
+# The schemas/*.json contract is copied into vura/io/schemas by
+# scripts/copy-schemas.js before packaging (see schemas.py) — without this,
+# setuptools would only pick up .py files and the data would be silently
+# dropped from the built wheel/sdist.
+[tool.setuptools.package-data]
+"vura.io" = ["schemas/*.json"]

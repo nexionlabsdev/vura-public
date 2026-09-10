@@ -1,0 +1,77 @@
+name: Release core-sdk
+
+# Independent release for @vura-data-os/core-sdk. Trigger by pushing a tag
+# like `core-sdk@1.2.3` — this repo's packages are versioned and released
+# independently, not in lockstep, so pushing this tag does NOT rebuild or
+# republish any other package.
+#
+# Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed. One-time
+# setup on npmjs.com: @vura-data-os/core-sdk -> Package Settings -> Trusted
+# Publisher -> GitHub Actions, Repository = this repo, Workflow filename =
+# `release-core-sdk.yml`.
+on:
+  push:
+    tags:
+      - 'core-sdk@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @vura-data-os/core-sdk to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#core-sdk@}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ steps.resolve.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/core-sdk/package.json', 'utf8'));
+            pkg.version = '${{ steps.resolve.outputs.version }}';
+            fs.writeFileSync('packages/core-sdk/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - run: npm install --no-audit --no-fund
+      - name: Compile
+        run: npm run compile --workspace=packages/core-sdk
+
+      - name: Publish (skips if this version is already on npm)
+        run: |
+          set -e
+          cd packages/core-sdk
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+          else
+            echo "Publishing $NAME@$VERSION..."
+            npm publish --access public --provenance
+          fi

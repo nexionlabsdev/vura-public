@@ -5,6 +5,11 @@ node_modules/
 out/
 dist/
 
+# vura-io's / vura-io-py's copy of the root schemas/ contract, regenerated
+# by scripts/copy-schemas.js on every compile/build/test
+packages/vura-io/schemas/
+packages/vura-io-py/vura/io/schemas/
+
 # VS Code specific
 .vscode/
 .vscode-test/
@@ -29,6 +34,8 @@ yarn-error.log*
 
 # Python venv
 .venv/
+__pycache__/
+*.egg-info/
 
 # vura-runner local runtime state
 .vura/

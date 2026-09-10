@@ -11,7 +11,7 @@
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "paths": {
-            "@vura/io": ["../vura-io/src/index.ts"]
+            "@vura-data-os/vura-io": ["../vura-io/src/index.ts"]
         }
     },
     "include": [

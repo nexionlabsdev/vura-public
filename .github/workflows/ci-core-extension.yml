@@ -1,0 +1,68 @@
+name: CI - core-extension
+
+# core-extension bundles a platform-specific native duckdb.node, hence the
+# full OS matrix. It's deliberately NOT an npm workspace member (see root
+# package.json) — its @vura-data-os/* deps resolve as normal npm packages,
+# so scripts/install-local-deps.sh overlays fresh local tarballs instead of
+# hitting the registry.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/core-extension/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-io/**'
+      - 'packages/vura-runner/**'
+      - 'scripts/install-local-deps.sh'
+      - '.github/workflows/ci-core-extension.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/core-extension/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-io/**'
+      - 'packages/vura-runner/**'
+      - 'scripts/install-local-deps.sh'
+      - '.github/workflows/ci-core-extension.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-core-extension-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        shell: bash
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Build core-sdk
+        run: npm run compile --workspace=packages/core-sdk
+
+      - name: Build vura-io
+        run: npm run compile --workspace=packages/vura-io
+
+      - name: Build vura-runner
+        run: npm run compile --workspace=packages/vura-runner
+
+      - name: Build core-extension (via local tarball overlay)
+        shell: bash
+        run: |
+          ./scripts/install-local-deps.sh core-extension
+          cd packages/core-extension && npm run compile

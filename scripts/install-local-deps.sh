@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Installs a non-workspace package's (core-extension, vura-dataverse-adapter) own
+# Installs a non-workspace package's (core-extension, vura-dataverse) own
 # dependencies for local building/testing.
 #
-# core-extension and vura-dataverse-adapter are deliberately NOT npm workspace
+# core-extension and vura-dataverse are deliberately NOT npm workspace
 # members (see root package.json) — they depend on @vura-data-os/* like any
 # real npm consumer would, resolved from the registry once those packages are
 # published. Before that first publish (or while testing local changes to a
@@ -12,11 +12,13 @@
 # This script: temporarily strips the @vura-data-os/* entries so the normal
 # install can succeed for everything else, restores the real package.json
 # immediately after, then overlays fresh tarballs of the local library
-# packages via `npm install --no-save` — which populates node_modules
-# without ever touching the committed package.json/package-lock.json.
+# packages actually used by <package-name> via `npm install --no-save` —
+# which populates node_modules without ever touching the committed
+# package.json/package-lock.json.
 #
 # Usage: scripts/install-local-deps.sh <package-name>
 #   e.g. scripts/install-local-deps.sh core-extension
+#        scripts/install-local-deps.sh vura-dataverse
 
 set -euo pipefail
 
@@ -45,7 +47,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-LIB_PACKAGES=(core-sdk vura-io vura-dataverse-sync-core vura-runner vura-dataverse-runner-plugin)
+# Only the local siblings the target package actually depends on get built
+# and overlaid — pulling in unrelated ones would just make npm reconcile a
+# bigger, unnecessary tree.
+case "$PKG_NAME" in
+  core-extension) LIB_PACKAGES=(core-sdk vura-io vura-runner) ;;
+  vura-dataverse) LIB_PACKAGES=(core-sdk vura-odata-sync-core) ;;
+  *)
+    echo "install-local-deps.sh has no known local-dependency set for '$PKG_NAME'." >&2
+    echo "Add a case for it below with the @vura-data-os/* siblings it depends on." >&2
+    exit 1
+    ;;
+esac
 
 echo "==> Building library packages"
 (cd "$ROOT_DIR" && npm install --no-audit --no-fund)
@@ -71,11 +84,7 @@ echo "==> Overlaying local @vura-data-os/* siblings actually used by $PKG_NAME"
 # fetch it from the registry.
 TARBALL_PATHS=()
 for lib in "${LIB_PACKAGES[@]}"; do
-  if [[ "$lib" == "vura-io" ]]; then
-    full_name="@vura/io"
-  else
-    full_name="@vura-data-os/$lib"
-  fi
+  full_name="@vura-data-os/$lib"
   echo "  -- $full_name"
   tgz_name="$(cd "$ROOT_DIR/packages/$lib" && npm pack --silent --pack-destination "$TARBALL_DIR")"
   TARBALL_PATHS+=("$TARBALL_DIR/$tgz_name")

@@ -1,0 +1,60 @@
+name: CI - core-sdk / vura-odata-sync-core / vura-io
+
+# Foundation TS libraries — no native platform-specific deps of their own
+# (vura-io's @duckdb/node-api aside, which the ubuntu runner covers), so
+# ubuntu-only is enough. Path-filtered so an unrelated PR (e.g. touching only
+# core-extension) doesn't run this.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/core-sdk/**'
+      - 'packages/vura-odata-sync-core/**'
+      - 'packages/vura-io/**'
+      - 'schemas/**'
+      - 'scripts/copy-schemas.js'
+      - '.github/workflows/ci-libs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/core-sdk/**'
+      - 'packages/vura-odata-sync-core/**'
+      - 'packages/vura-io/**'
+      - 'schemas/**'
+      - 'scripts/copy-schemas.js'
+      - '.github/workflows/ci-libs.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-libs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Build core-sdk
+        run: npm run compile --workspace=packages/core-sdk
+
+      - name: Build and test vura-odata-sync-core
+        run: |
+          npm run compile --workspace=packages/vura-odata-sync-core
+          npm test --workspace=packages/vura-odata-sync-core
+
+      - name: Build and test vura-io
+        run: |
+          npm run compile --workspace=packages/vura-io
+          npm test --workspace=packages/vura-io

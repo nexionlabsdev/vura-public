@@ -1,0 +1,152 @@
+name: Release vura-runner
+
+# Independent release for @vura-data-os/vura-runner — published to npm, and
+# as a Docker image (ghcr.io/nexionlabsdev/vura-runner, optionally also
+# Docker Hub) built FROM that just-published npm package (see
+# packages/vura-runner/Dockerfile). Trigger by pushing a tag like
+# `vura-runner@1.2.3`.
+#
+# vura-runner IS an npm workspace member (unlike vura-dataverse/
+# core-extension), so its @vura-data-os/core-sdk and @vura-data-os/vura-io dependencies
+# resolve via normal workspace symlinks here — no tarball overlay needed.
+# If you need a newer core-sdk/@vura-data-os/vura-io for this release, publish those
+# first via their own release-*.yml workflows.
+#
+# npm publishing uses OIDC trusted publishing — no NPM_TOKEN secret needed.
+# One-time setup on npmjs.com: @vura-data-os/vura-runner -> Package Settings
+# -> Trusted Publisher -> GitHub Actions, Repository = this repo, Workflow
+# filename = `release-vura-runner.yml`.
+#
+# GHCR needs no extra secrets (uses the job's own GITHUB_TOKEN). Docker Hub
+# push is optional — skipped, not failed, if these secrets are unset:
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+on:
+  push:
+    tags:
+      - 'vura-runner@*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#vura-runner@}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  publish-npm:
+    name: Publish @vura-data-os/vura-runner to npm
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Set version to ${{ needs.resolve-version.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/vura-runner/package.json', 'utf8'));
+            pkg.version = '${{ needs.resolve-version.outputs.version }}';
+            fs.writeFileSync('packages/vura-runner/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Compile and test
+        run: |
+          npm run compile --workspace=packages/vura-runner
+          npm test --workspace=packages/vura-runner
+
+      - name: Publish (skips if this version is already on npm)
+        run: |
+          set -e
+          cd packages/vura-runner
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+          else
+            echo "Publishing $NAME@$VERSION..."
+            npm publish --access public --provenance
+          fi
+
+  docker:
+    name: Build and push Docker image
+    needs: [resolve-version, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # required to push to ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: tags
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          TAGS="ghcr.io/nexionlabsdev/vura-runner:${VERSION},ghcr.io/nexionlabsdev/vura-runner:latest"
+          if [[ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]]; then
+            TAGS="${TAGS},nexionlabsdev/vura-runner:${VERSION},nexionlabsdev/vura-runner:latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/vura-runner/Dockerfile
+          # npm's @duckdb/node-api pulls a prebuilt native binary per
+          # platform at install time — both linux/amd64 and linux/arm64 have
+          # prebuilds, so this doesn't need cross-compilation, just QEMU to
+          # actually run the arm64 install step.
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VURA_RUNNER_VERSION=${{ needs.resolve-version.outputs.version }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}

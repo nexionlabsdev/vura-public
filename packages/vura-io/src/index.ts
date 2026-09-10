@@ -7,6 +7,7 @@ export { shredJson, unshredJson, Manifest, TableMeta } from './shredder';
 export { DataManager } from './data';
 export { StateManager } from './state';
 export { MetricsManager } from './metrics';
+export { loadSchemas, getSchemaDirPath, defaultSchemas } from './schemas';
 
 export default {
     data,

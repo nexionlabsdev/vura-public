@@ -1,0 +1,50 @@
+name: CI - vura-dataverse
+
+# vura-dataverse has no native dependencies, so ubuntu-only is enough. It's
+# deliberately NOT an npm workspace member (see root package.json) — its
+# @vura-data-os/* deps resolve as normal npm packages, so
+# scripts/install-local-deps.sh overlays fresh local tarballs of core-sdk
+# and vura-odata-sync-core instead of hitting the registry.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/vura-dataverse/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-odata-sync-core/**'
+      - 'scripts/install-local-deps.sh'
+      - '.github/workflows/ci-vura-dataverse.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/vura-dataverse/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-odata-sync-core/**'
+      - 'scripts/install-local-deps.sh'
+      - '.github/workflows/ci-vura-dataverse.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-vura-dataverse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Build (via local tarball overlay — see workflow header comment)
+        run: ./scripts/install-local-deps.sh vura-dataverse
+
+      - name: Compile and test
+        run: cd packages/vura-dataverse && npm run compile && npm test

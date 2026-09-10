@@ -1,6 +1,6 @@
-.PHONY: build install install-runner build-mac build-linux build-windows build-vura-dataverse-adapter clean
+.PHONY: build install install-runner build-mac build-linux build-windows build-vura-dataverse clean
 
-# TypeScript compile: npm install (workspace: the 4 library packages) + each
+# TypeScript compile: npm install (workspace: the library packages) + each
 # package's own `compile` script, in dependency order. core-extension is not
 # a workspace member (see root package.json) — its @vura-data-os/* deps
 # aren't published yet, so install-local-deps.sh overlays fresh local
@@ -10,7 +10,6 @@ build:
 	node ./scripts/copy-duckdb-vendor.js
 	cd packages/core-sdk && npm run compile
 	cd packages/vura-io && npm run compile
-	cd packages/vura-dataverse-sync-core && npm run compile
 	cd packages/vura-runner && npm run compile
 	bash ./scripts/install-local-deps.sh core-extension
 	cd packages/core-extension && npm run compile
@@ -48,13 +47,15 @@ build-windows:
 	bash ./scripts/package-extension.sh core-extension --target win32-x64 -o dist/vura-core-win32-x64.vsix
 	bash ./scripts/package-extension.sh core-extension --target win32-arm64 -o dist/vura-core-win32-arm64.vsix
 
-# The Dataverse Adapter has no native dependencies (pure JS: grpc-js, proto-loader,
-# core-sdk, vura-dataverse-sync-core), so it doesn't need per-platform builds.
-build-vura-dataverse-adapter:
-	bash ./scripts/install-local-deps.sh vura-dataverse-adapter
-	bash ./scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
+# vura-dataverse (the unified Dataverse connector, published to both npm and
+# the VS Code Marketplace from the same package) has no native dependencies
+# (pure JS: core-sdk, vura-odata-sync-core, @azure/msal-node), so it doesn't
+# need per-platform builds.
+build-vura-dataverse:
+	bash ./scripts/install-local-deps.sh vura-dataverse
+	bash ./scripts/package-extension.sh vura-dataverse -o dist/vura-dataverse.vsix
 
 clean:
 	rm -rf dist
 	rm -rf packages/*/out packages/*/tsconfig.tsbuildinfo
-	rm -rf packages/core-extension/node_modules packages/vura-dataverse-adapter/node_modules
+	rm -rf packages/core-extension/node_modules packages/vura-dataverse/node_modules

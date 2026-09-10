@@ -7,7 +7,7 @@ This is a living document. Dates aren't promises — it's a statement of directi
 - `.flownb` notebooks with SQL, Python, JavaScript, and HTML cells in VS Code
 - Embedded DuckDB engine with zero-copy Parquet IPC between cells (the "polyglot bridge")
 - Auto-Schema Flattener — recursive JSON → relational Parquet shredding
-- `core-sdk` add-on contract (`IVuraProvider`, `IConnectionAdapter`, `ProviderRegistry`) shared by both kernels, and a reference Dataverse/OData integration (`vura-dataverse-sync-core` + `vura-dataverse-adapter` + `vura-dataverse-runner-plugin`) showing the same Add-on running in either one
+- `core-sdk` add-on contract (`IVuraProvider`, `IConnectionAdapter`, `ProviderRegistry`) shared by both kernels, and a reference Dataverse/OData integration (`vura-dataverse`, a single package published to both npm and the VS Code Marketplace) showing the same Add-on running in either one
 - `vura-runner` — headless CLI execution of `.flownb` notebooks outside VS Code, with an HTTP trigger API and its own Add-on plugin loading (declared per-notebook via `requiredPlugins`, or globally via `vura.plugins`)
 
 ## Near-term (open source)

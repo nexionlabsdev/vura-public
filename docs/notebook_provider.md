@@ -51,20 +51,19 @@ The Controller is responsible for actually running the code within the cells.
 
 #### Logic Flow:
 1. **Trigger:** The user clicks "Run Cell" or "Run All".
-2. **Execution Task:** VS Code creates a `NotebookCellExecution` task.
-3. **Routing:** The controller inspects `cell.document.languageId` and routes the execution:
-   - **`sql`**: Handled via `_executeSql()`. Parses magic commands (`-- !ingest-file`) or runs the query against Dataverse or local DuckDB.
-   - **`python` / `javascript`**: Handled via `_executeScript()`. Writes a temp file and spawns the appropriate sidecar.
-   - **`vura-terminal`**: Handled via `_executeTerminal()`. For each `!` line, checks the shared `ProviderRegistry` (from `core-sdk`) for a registered Add-on handling that command (e.g. `!sync_dataverse`) and dispatches to its `handleCommand()`; anything unrecognized falls back to a raw shell command.
-4. **Output Rendering:** Upon completion, the controller formats the results (e.g., generating HTML grids) and appends them to the execution task using `vscode.NotebookCellOutputItem`.
+2. **Execution Task:** VS Code creates a `NotebookCellExecution` task for each executed cell.
+3. **Routing & Execution:**
+   - **Terminal Commands (`vura-terminal` / `shellscript`)**: Handled via `_executeTerminal()`. For each `!` line, checks `!clean_session`/`!ingest-file` built-ins or the shared `ProviderRegistry` (from `core-sdk`) for a registered Add-on handling that command (e.g., `!dataverse.sync`) and dispatches to its `handleCommand()`; anything unrecognized falls back to a raw shell command.
+   - **Code Cells (`sql`, `python`, `javascript`, `html`, etc.)**: Delegated to `VuraRunner.executeCell()` / `runner.executeNotebook()` from `@vura-data-os/vura-runner`.
+4. **Environment & Logging:** The controller wraps VS Code APIs using `VsCodeEnvironment` and `VsCodeCellLogger`. `VuraRunner` executes cell logic via shared language handlers and writes logs/outputs back to VS Code's execution task through `VsCodeCellLogger`.
 
 #### Technical Breakdown:
 
-| Method | Parameters | Return Type | Purpose |
-|--------|------------|-------------|---------|
-| `_executeSql` | `cell: vscode.NotebookCell`, `execution: vscode.NotebookCellExecution` | `Promise<void>` | Runs SQL queries, handles OData/Ingestion magic commands, and outputs an HTML table. |
-| `_executeScript` | `cell`, `execution`, `lang: 'python'\|'node'` | `Promise<void>` | Spawns sidecars for isolated execution, capturing stdout for `vura_bridge` events or graph rendering. |
-| `_getGridHtml` | `data: any[]` | `string` | Generates the HTML string containing the AG-Grid/native HTML table for data visualization. |
+| Class / Method | Parameters | Return Type | Purpose |
+|----------------|------------|-------------|---------|
+| `_execute` | `cells: vscode.NotebookCell[]`, `_notebook`, `_controller` | `Promise<void>` | Entry point for notebook execution; initializes `VsCodeEnvironment`, proxy loggers, and runs notebook via `VuraRunner.executeNotebook()`. |
+| `_doExecution` | `cell: vscode.NotebookCell` | `Promise<void>` | Single cell execution dispatcher; routes terminal cells to `_executeTerminal()` and code cells to `VuraRunner.executeCell()`. |
+| `_executeTerminal` | `cell: vscode.NotebookCell`, `execution: vscode.NotebookCellExecution` | `Promise<void>` | Parses and executes `!` terminal commands, dispatching to `ProviderRegistry` add-ons, file ingestion handlers, or shell fallback. |
 
 ---
 
@@ -83,17 +82,15 @@ stateDiagram-v2
     state NotebookController {
         [*] --> CheckLanguage
 
-        CheckLanguage --> SQL : lang == 'sql'
-        CheckLanguage --> PythonNode : lang == 'python' || 'javascript'
-        CheckLanguage --> Terminal : lang == 'vura-terminal'
+        CheckLanguage --> VuraRunner : Code Cells ('sql', 'python', 'javascript', 'html', etc.)
+        CheckLanguage --> Terminal : Terminal ('vura-terminal', 'shellscript')
 
-        SQL --> ParseMagicCommands
-        ParseMagicCommands --> ExecuteDuckDB : Local
-        ParseMagicCommands --> ExecuteTDS : Dataverse Connection
-
-        PythonNode --> WriteTempFile
-        WriteTempFile --> SpawnProcess
-        SpawnProcess --> ReadStdout
+        state VuraRunner {
+            [*] --> InitVsCodeEnv
+            InitVsCodeEnv --> ExecuteCell
+            ExecuteCell --> LanguageHandlers
+            LanguageHandlers --> DuckDbOrSidecar
+        }
 
         Terminal --> ParseTerminalCommands
         ParseTerminalCommands --> CheckProviderRegistry
@@ -101,7 +98,8 @@ stateDiagram-v2
         CheckProviderRegistry --> ShellFallback : not registered
     }
 
-    NotebookController --> RenderOutput
+    NotebookController --> VsCodeCellLogger
+    VsCodeCellLogger --> RenderOutput
     RenderOutput --> VSCodeUI
     VSCodeUI --> [*]
 ```

@@ -41,7 +41,7 @@ export async function handleGridExport(
             title: `Exporting ${tableName} to ${defaultExt.toUpperCase()}…`,
             cancellable: false
         }, async () => {
-            const { DuckDbManager } = require('../services/duckDbManager');
+            const { DuckDbManager, generateExportBuffer } = require('@vura-data-os/vura-runner');
             const duckDb = await DuckDbManager.getInstance(context);
             let records: any[] = [];
             try {
@@ -54,55 +54,8 @@ export async function handleGridExport(
                 throw new Error(`Table "${tableName}" is empty — nothing to export.`);
             }
 
-            // Coerce BigInt values (JSON.stringify / ExcelJS can't handle them)
-            records = records.map(row => {
-                const out: any = {};
-                for (const [k, v] of Object.entries(row)) {
-                    if (typeof v === 'bigint') {
-                        out[k] = v >= BigInt(Number.MIN_SAFE_INTEGER) && v <= BigInt(Number.MAX_SAFE_INTEGER)
-                            ? Number(v)
-                            : v.toString();
-                    } else {
-                        out[k] = v;
-                    }
-                }
-                return out;
-            });
-
-            if (defaultExt === 'csv') {
-                await new Promise<void>((resolve, reject) => {
-                    stringify(records, { header: true })
-                        .pipe(fs.createWriteStream(uri.fsPath))
-                        .on('finish', resolve)
-                        .on('error', reject);
-                });
-            } else if (defaultExt === 'json') {
-                await fs.promises.writeFile(uri.fsPath, JSON.stringify(records, null, 2), 'utf8');
-            } else if (defaultExt === 'parquet') {
-                const schemaObj: any = {};
-                for (const k of Object.keys(records[0])) {
-                    let type = 'UTF8';
-                    const sample = records[0][k];
-                    if (typeof sample === 'number') {
-                        type = Number.isInteger(sample) ? 'INT64' : 'DOUBLE';
-                    } else if (typeof sample === 'boolean') {
-                        type = 'BOOLEAN';
-                    }
-                    schemaObj[k] = { type, optional: true };
-                }
-                const schema = new parquet.ParquetSchema(schemaObj);
-                const writer = await parquet.ParquetWriter.openFile(schema, uri.fsPath);
-                for (const row of records) {
-                    await writer.appendRow(row);
-                }
-                await writer.close();
-            } else {
-                const workbook = new ExcelJS.Workbook();
-                const worksheet = workbook.addWorksheet(tableName);
-                worksheet.columns = Object.keys(records[0]).map(k => ({ header: k, key: k }));
-                records.forEach(r => worksheet.addRow(r));
-                await workbook.xlsx.writeFile(uri.fsPath);
-            }
+            const { buffer } = await generateExportBuffer(records, defaultExt, tableName);
+            await vscode.workspace.fs.writeFile(uri, new Uint8Array(buffer));
         });
 
         // Progress is dismissed here — now show the success toast

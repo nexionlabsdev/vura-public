@@ -6,7 +6,7 @@ export interface SidecarRequest {
     id?: string;
     code: string;
     filename?: string;
-    env?: Record<string, string>;
+    ctx?: { storagePath?: string; token?: string; depthLimit?: number };
 }
 
 export interface SidecarResponse {
@@ -28,6 +28,7 @@ interface Worker {
     pending: Map<string, Pending>;
     busy: boolean;
     lastUsed: number;
+    rl?: readline.Interface;
 }
 
 const MAX_IDLE_PER_KEY = 2;
@@ -70,14 +71,43 @@ class SidecarPool {
         }
     }
 
-    private kill(worker: Worker) {
+    private removeWorker(worker: Worker) {
+        for (const [key, workers] of this.pools.entries()) {
+            if (workers.includes(worker)) {
+                this.pools.set(key, workers.filter(w => w !== worker));
+            }
+        }
+    }
+
+    private kill(worker: Worker): Promise<void> {
         for (const p of worker.pending.values()) {
             clearTimeout(p.timeout);
             p.reject(new Error('Sidecar worker was terminated'));
         }
         worker.pending.clear();
-        try { worker.proc.stdin?.end(); } catch { }
-        try { worker.proc.kill(); } catch { }
+        try { worker.rl?.close(); } catch { }
+        this.removeWorker(worker);
+        return new Promise((resolve) => {
+            if (worker.proc.killed || worker.proc.exitCode !== null || worker.proc.signalCode !== null) {
+                return resolve();
+            }
+            let done = false;
+            const onExit = () => {
+                if (!done) {
+                    done = true;
+                    clearTimeout(timeout);
+                    resolve();
+                }
+            };
+            const timeout = setTimeout(() => {
+                try { worker.proc.kill('SIGKILL'); } catch {}
+                // Ensure promise resolves even if exit event was missed or delayed
+                setTimeout(() => onExit(), 100);
+            }, 5000); // 5,000ms grace period before escalating to SIGKILL
+
+            worker.proc.once('exit', onExit);
+            try { worker.proc.stdin?.end(); worker.proc.kill(); } catch { onExit(); }
+        });
     }
 
     /** Acquire a worker for `key`, reusing an idle one or spawning a fresh one via `spawnFn`. */
@@ -93,6 +123,7 @@ class SidecarPool {
         const worker: Worker = { proc, pending: new Map(), busy: true, lastUsed: Date.now() };
 
         const rl = readline.createInterface({ input: proc.stdout!, terminal: false });
+        worker.rl = rl;
         rl.on('line', (line: string) => {
             let msg: SidecarResponse;
             try { msg = JSON.parse(line); } catch { return; }
@@ -144,6 +175,7 @@ class SidecarPool {
             }
             const timeout = setTimeout(() => {
                 worker.pending.delete(id);
+                this.kill(worker);
                 reject(new Error('Sidecar execution timed out'));
             }, REQUEST_TIMEOUT_MS);
             worker.pending.set(id, { resolve, reject, timeout });
@@ -172,28 +204,27 @@ class SidecarPool {
     }
 
     /** Kill every worker for a given key (e.g. when a notebook run is done). */
-    disposeKey(key: string) {
+    async disposeKey(key: string): Promise<void> {
         const workers = this.pools.get(key);
         if (!workers) return;
-        for (const w of workers) this.kill(w);
         this.pools.delete(key);
+        await Promise.all(workers.map(w => this.kill(w)));
     }
 
     /** Kill every worker for a given notebookId across all runtime kinds. */
-    disposeNotebook(notebookId: string) {
-        for (const key of Array.from(this.pools.keys())) {
-            if (key.startsWith(`${notebookId}:`)) {
-                this.disposeKey(key);
-            }
-        }
+    async disposeNotebook(notebookId: string): Promise<void> {
+        const keysToDispose = Array.from(this.pools.keys()).filter(key => key.startsWith(`${notebookId}:`));
+        await Promise.all(keysToDispose.map(key => this.disposeKey(key)));
     }
 
     /** Kill every worker across every key (e.g. on CLI process exit). */
-    disposeAll() {
+    async disposeAll(): Promise<void> {
+        const allWorkers: Worker[] = [];
         for (const workers of this.pools.values()) {
-            for (const w of workers) this.kill(w);
+            allWorkers.push(...workers);
         }
         this.pools.clear();
+        await Promise.all(allWorkers.map(w => this.kill(w)));
     }
 }
 
