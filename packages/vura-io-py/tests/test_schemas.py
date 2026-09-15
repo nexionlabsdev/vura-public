@@ -45,7 +45,7 @@ class TestSchemas(unittest.TestCase):
             "version": 1,
             "tableName": "users",
             "rowCount": 100,
-            "parts": [{"file": "users_1.parquet", "rowCount": 100}],
+            "nextPartIndex": 1,
             "schema": {"id": "INTEGER", "name": "VARCHAR"},
         }
         validate_object(valid_manifest, TABLE_MANIFEST_SCHEMA)

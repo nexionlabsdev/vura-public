@@ -1,0 +1,73 @@
+name: CI - core-extension
+
+# core-extension bundles a platform-specific native duckdb.node, hence the
+# full OS matrix. It's deliberately NOT an npm workspace member (see root
+# package.json) — its @vura-data-os/* deps resolve as normal npm packages,
+# so scripts/install-local-deps.sh overlays fresh local tarballs instead of
+# hitting the registry.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/core-extension/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-io/**'
+      - 'packages/vura-runner/**'
+      - 'scripts/install-local-deps.sh'
+      - '.github/workflows/ci-core-extension.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/core-extension/**'
+      - 'packages/core-sdk/**'
+      - 'packages/vura-io/**'
+      - 'packages/vura-runner/**'
+      - 'scripts/install-local-deps.sh'
+      - '.github/workflows/ci-core-extension.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-core-extension-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        shell: bash
+        run: npm install -g npm@latest
+
+      - name: Install workspace dependencies
+        run: npm install --no-audit --no-fund
+
+      # core-extension is deliberately NOT a workspace member (see root
+      # package.json) — it depends on @vura-data-os/* as normal npm packages,
+      # resolved from the registry once published. Before that,
+      # install-local-deps.sh overlays fresh tarballs of the local library
+      # packages instead, so this build reflects the current branch, not
+      # whatever's last published.
+      - name: Build core-extension
+        shell: bash
+        run: |
+          ./scripts/install-local-deps.sh core-extension
+          cd packages/core-extension && npm run compile
+
+      - name: Run core-extension VS Code E2E integration tests
+        shell: bash
+        run: |
+          cd packages/core-extension
+          npm run test:e2e

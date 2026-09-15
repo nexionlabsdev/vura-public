@@ -73,6 +73,25 @@ function serveForever(data, state, metrics) {
     let isExecuting = false;
     const realStdoutWrite = process.stdout.write.bind(process.stdout);
 
+    // Cell code often follows the documented fire-and-forget pattern
+    // (\`async function run() { ... } run();\` with no top-level await —
+    // see docs/DEVELOPMENT_PLAYBOOK.md), so the outer \`(async () => {...})()\`
+    // wrapper below can resolve before run()'s own work — e.g. a
+    // data.put(...) — has finished. Wrapping data's async methods lets each
+    // request track any such in-flight calls and drain them before
+    // responding, so their writes (and vura_io_mapping emissions) land
+    // before the sidecar replies.
+    let pendingOps = [];
+    for (const name of ['put', 'get', 'append', 'count', 'flush', 'flushAll', 'stream', 'pack', 'unpack', 'tables']) {
+        if (typeof data[name] !== 'function') continue;
+        const orig = data[name].bind(data);
+        data[name] = (...args) => {
+            const result = orig(...args);
+            pendingOps.push(Promise.resolve(result).catch(() => {}));
+            return result;
+        };
+    }
+
     return new Promise((resolve) => {
         rl.on('line', async (line) => {
             const trimmed = line.trim();
@@ -96,6 +115,7 @@ function serveForever(data, state, metrics) {
             }
 
             isExecuting = true;
+            pendingOps = [];
             try {
                 const ctx = reqCtx || {};
                 if (typeof state.setRequestCtx === 'function') {
@@ -157,6 +177,15 @@ function serveForever(data, state, metrics) {
                     const context = vm.createContext(sandbox);
                     const executionPromise = script.runInContext(context);
                     await executionPromise;
+                    // Drain in-flight ops from any un-awaited async work the
+                    // cell fired off (see the pendingOps wrapping above) —
+                    // draining can itself queue more (e.g. a .then() chain),
+                    // so keep going until a pass adds nothing new.
+                    let pendingOpsCount = -1;
+                    while (pendingOps.length !== pendingOpsCount) {
+                        pendingOpsCount = pendingOps.length;
+                        await Promise.all(pendingOps);
+                    }
                     await data.flushAll();
                 } catch (e) {
                     status = 'error';

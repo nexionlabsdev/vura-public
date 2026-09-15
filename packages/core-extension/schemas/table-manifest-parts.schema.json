@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "vura://table/manifest-parts.schema.json",
+  "type": "object",
+  "required": ["file", "rowCount"],
+  "properties": {
+    "file": {
+      "type": "string"
+    },
+    "rowCount": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

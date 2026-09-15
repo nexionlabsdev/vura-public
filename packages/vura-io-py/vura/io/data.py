@@ -106,7 +106,7 @@ class DataManager:
         parts_path = os.path.join(dir_path, 'manifest-parts.jsonl')
         if not os.path.exists(parts_path):
             return []
-        with open(parts_path, 'r', encoding='utf-utf-8' in Buffer if 'Buffer' in globals() else 'utf-8') if False else open(parts_path, 'r', encoding='utf-8') as f:
+        with open(parts_path, 'r', encoding='utf-8') as f:
             lines = [line.strip() for line in f if line.strip()]
         return [json.loads(line) for line in lines]
 

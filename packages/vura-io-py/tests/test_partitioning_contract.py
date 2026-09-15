@@ -35,10 +35,12 @@ class TestPartitioningContractPy(unittest.TestCase):
         self.data_mgr.put("test_tbl", rows)
 
         manifest_file = os.path.join(self.tmp_dir, "test_tbl", "manifest.json")
+        parts_file = os.path.join(self.tmp_dir, "test_tbl", "manifest-parts.jsonl")
         part0 = os.path.join(self.tmp_dir, "test_tbl", "part-0000.parquet")
         arrow_file = os.path.join(self.tmp_dir, "test_tbl.arrow")
 
         self.assertTrue(os.path.exists(manifest_file))
+        self.assertTrue(os.path.exists(parts_file))
         self.assertTrue(os.path.exists(part0))
         self.assertFalse(os.path.exists(arrow_file))
 
@@ -46,7 +48,13 @@ class TestPartitioningContractPy(unittest.TestCase):
             manifest = json.load(f)
         self.assertEqual(manifest["version"], 1)
         self.assertEqual(manifest["rowCount"], 10)
-        self.assertEqual(len(manifest["parts"]), 1)
+        self.assertEqual(manifest["nextPartIndex"], 1)
+        self.assertNotIn("parts", manifest)
+
+        parts = self.data_mgr._get_manifest_parts(os.path.dirname(manifest_file))
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0]["file"], "part-0000.parquet")
+        self.assertEqual(parts[0]["rowCount"], 10)
         self.assertEqual(self.data_mgr.count("test_tbl"), 10)
 
     def test_migration_on_append(self):
@@ -73,7 +81,10 @@ class TestPartitioningContractPy(unittest.TestCase):
         with open(manifest_file, "r", encoding="utf-8") as f:
             manifest = json.load(f)
         self.assertEqual(manifest["rowCount"], 11)
-        self.assertEqual(len(manifest["parts"]), 2)
+        self.assertEqual(manifest["nextPartIndex"], 2)
+
+        parts = self.data_mgr._get_manifest_parts(os.path.dirname(manifest_file))
+        self.assertEqual(len(parts), 2)
 
     def test_stream_arrow_format(self):
         rows = [{"id": i, "score": i * 10} for i in range(15)]
@@ -84,13 +95,13 @@ class TestPartitioningContractPy(unittest.TestCase):
         self.assertIsInstance(batches[0], pa.RecordBatch)
 
     def test_isolated_atomic_rename_failure(self):
-        initial_manifest = {"version": 1, "tableName": "rename_tbl", "rowCount": 10, "parts": [{"file": "part-0000.parquet", "rowCount": 10}]}
+        initial_manifest = {"version": 1, "tableName": "rename_tbl", "rowCount": 10, "nextPartIndex": 1, "schema": {"id": "BIGINT"}}
         self.data_mgr._save_manifest_atomically("rename_tbl", initial_manifest)
 
         manifest_file = os.path.join(self.tmp_dir, "rename_tbl", "manifest.json")
         self.assertTrue(os.path.exists(manifest_file))
 
-        updated_manifest = {"version": 1, "tableName": "rename_tbl", "rowCount": 20, "parts": [{"file": "part-0000.parquet", "rowCount": 10}, {"file": "part-0001.parquet", "rowCount": 10}]}
+        updated_manifest = {"version": 1, "tableName": "rename_tbl", "rowCount": 20, "nextPartIndex": 2, "schema": {"id": "BIGINT"}}
 
         orig_replace = os.replace
         def mock_replace(src, dst):
@@ -106,7 +117,7 @@ class TestPartitioningContractPy(unittest.TestCase):
         with open(manifest_file, "r", encoding="utf-8") as f:
             saved_manifest = json.load(f)
         self.assertEqual(saved_manifest["rowCount"], 10)
-        self.assertEqual(len(saved_manifest["parts"]), 1)
+        self.assertEqual(saved_manifest["nextPartIndex"], 1)
 
 if __name__ == "__main__":
     unittest.main()

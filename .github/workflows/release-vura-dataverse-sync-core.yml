@@ -1,0 +1,83 @@
+name: Release vura-dataverse-sync-core
+
+# Publishes @vura-data-os/vura-dataverse-sync-core to npm at the given
+# version. Called by release.yml as one step of the coordinated lockstep
+# v*.*.* release (see that file's header comment) — every publishable
+# package still ships at the same version together, including this
+# package's own @vura-data-os/* dependency ranges. Also runnable standalone
+# via workflow_dispatch to retry/republish just this package (npm publish
+# below already no-ops if that exact version is already live).
+#
+# Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed. One-time
+# setup on npmjs.com: @vura-data-os/vura-dataverse-sync-core -> Package
+# Settings -> Trusted Publisher -> GitHub Actions, Repository = this repo,
+# Workflow filename = `release-vura-dataverse-sync-core.yml`.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.2.3)'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @vura-data-os/vura-dataverse-sync-core to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Set version to ${{ inputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = 'packages/vura-dataverse-sync-core/package.json';
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = '${{ inputs.version }}';
+            for (const dep of Object.keys(pkg.dependencies || {})) {
+              if (dep.startsWith('@vura-data-os/')) pkg.dependencies[dep] = '^${{ inputs.version }}';
+            }
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Build core-sdk
+        run: npm run compile --workspace=packages/core-sdk
+
+      - name: Build vura-dataverse-sync-core
+        run: npm run compile --workspace=packages/vura-dataverse-sync-core
+
+      - name: Publish (skips if this version is already on npm)
+        run: |
+          set -e
+          cd packages/vura-dataverse-sync-core
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+          else
+            echo "Publishing $NAME@$VERSION..."
+            npm publish --access public --provenance
+          fi

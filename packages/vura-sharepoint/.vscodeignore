@@ -1,0 +1,13 @@
+.vscode/**
+.vscode-test/**
+out/**/*.map
+src/**
+scripts/**
+.gitignore
+tsconfig.json
+*.tsbuildinfo
+**/*.d.ts
+**/*.map
+**/node_modules/.cache/**
+**/node_modules/.package-lock.json
+**/node_modules/@vura-data-os/*/node_modules/**
