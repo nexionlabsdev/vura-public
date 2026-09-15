@@ -37,14 +37,15 @@ if [ -n "$RESOLVED_PLUGINS" ] && [ -f "$CATALOG_PATH" ]; then
 
         const pluginList = rawPlugins.split(",").map(s => s.trim()).filter(Boolean);
         const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+        const connectors = catalog.connectors || {};
 
         for (const pluginName of pluginList) {
-            if (!catalog[pluginName]) {
+            if (!connectors[pluginName]) {
                 console.error(`Warning: unknown plugin "${pluginName}" requested. Skipping.`);
                 continue;
             }
 
-            const info = catalog[pluginName];
+            const info = connectors[pluginName];
             const vsixName = info.vsixName;
             const vsixPath = path.join(pluginsDir, vsixName);
 

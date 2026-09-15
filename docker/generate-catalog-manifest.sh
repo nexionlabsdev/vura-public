@@ -12,19 +12,21 @@ fi
 
 missing=0
 
-# Read keys from JSON
+# Read connector keys from JSON — core libraries and Docker images are
+# catalogued in the same file but under separate sections, since they aren't
+# "plugins" (packages/connectors/<key>, staged/packaged by build-plugins.sh).
 plugin_keys=$(node -e '
   const fs = require("fs");
   const catalog = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  console.log(Object.keys(catalog).join(" "));
+  console.log(Object.keys(catalog.connectors || {}).join(" "));
 ' "${CATALOG_FILE}")
 
 for plugin in ${plugin_keys}; do
-  if [ ! -d "${ROOT_DIR}/packages/${plugin}" ]; then
-    echo "Error: catalog entry '${plugin}' does not exist in ${ROOT_DIR}/packages/" >&2
+  if [ ! -d "${ROOT_DIR}/packages/connectors/${plugin}" ]; then
+    echo "Error: catalog entry '${plugin}' does not exist in ${ROOT_DIR}/packages/connectors/" >&2
     missing=1
   else
-    echo "Catalog entry '${plugin}' verified in packages/${plugin}."
+    echo "Catalog entry '${plugin}' verified in packages/connectors/${plugin}."
   fi
 done
 
@@ -33,11 +35,17 @@ if [ ${missing} -ne 0 ]; then
   exit 1
 fi
 
-# Reverse check: scan packages/*/src/index.ts for provider implementations
-# (packages exporting activateVsCodeProvider or implementing IVuraProvider)
-# and ensure they are listed in plugins-catalog.json.
+# Reverse check: scan packages/connectors/*/src/index.ts for provider
+# implementations (packages exporting activateVsCodeProvider or implementing
+# IVuraProvider) and ensure they are listed in plugins-catalog.json's
+# "connectors" section. Only packages/connectors/ is scanned — packages/core/
+# (core-sdk, core-extension, vura-runner, vura-io, vura-odata-sync-core) are
+# the platform itself, not installable connector plugins, even though
+# core-sdk's own src/index.ts re-exports the activateVsCodeProvider() helper
+# (matching the grep below on the literal helper name, not an actual
+# implementation of it — hence the explicit skip).
 reverse_missing=0
-for index_file in "${ROOT_DIR}"/packages/*/src/index.ts; do
+for index_file in "${ROOT_DIR}"/packages/connectors/*/src/index.ts; do
   [ -f "${index_file}" ] || continue
   pkg_name=$(basename "$(dirname "$(dirname "${index_file}")")")
 

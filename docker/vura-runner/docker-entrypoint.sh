@@ -33,15 +33,16 @@ if [ -n "$RESOLVED_PLUGINS" ] && [ -f "$CATALOG_PATH" ]; then
 
         const pluginList = rawPlugins.split(",").map(s => s.trim()).filter(Boolean);
         const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+        const connectors = catalog.connectors || {};
         const activePackages = [];
 
         for (const pluginName of pluginList) {
-            if (!catalog[pluginName]) {
+            if (!connectors[pluginName]) {
                 console.error(`Warning: unknown plugin "${pluginName}" requested. Skipping.`);
                 continue;
             }
 
-            const info = catalog[pluginName];
+            const info = connectors[pluginName];
             const npmPackage = info.npmPackage;
             const srcCatalogPath = path.join("/opt/vura/plugins-catalog", pluginName);
             const targetPkgPath = path.join(appDir, "node_modules", npmPackage);

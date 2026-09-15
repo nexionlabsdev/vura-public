@@ -9,19 +9,19 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/core-extension/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-io/**'
-      - 'packages/vura-runner/**'
+      - 'packages/core/core-extension/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-io/**'
+      - 'packages/core/vura-runner/**'
       - 'scripts/install-local-deps.sh'
       - '.github/workflows/ci-core-extension.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'packages/core-extension/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-io/**'
-      - 'packages/vura-runner/**'
+      - 'packages/core/core-extension/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-io/**'
+      - 'packages/core/vura-runner/**'
       - 'scripts/install-local-deps.sh'
       - '.github/workflows/ci-core-extension.yml'
   workflow_dispatch: {}
@@ -64,10 +64,10 @@ jobs:
         shell: bash
         run: |
           ./scripts/install-local-deps.sh core-extension
-          cd packages/core-extension && npm run compile
+          cd packages/core/core-extension && npm run compile
 
       - name: Run core-extension VS Code E2E integration tests
         shell: bash
         run: |
-          cd packages/core-extension
+          cd packages/core/core-extension
           npm run test:e2e

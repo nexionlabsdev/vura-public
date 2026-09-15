@@ -56,9 +56,17 @@ graph TD
 
     E[VURA Dataverse Connector] --->|Registers|R
     F[VURA SharePoint Connector] --->|Registers|R
+    J[VURA OneDrive Connector] --->|Registers|R
+    K[VURA Google Drive Connector] --->|Registers|R
+    L[VURA S3 Connector] --->|Registers|R
+    M[VURA Local Folder Connector] --->|Registers|R
 
     E -->|Uses|G[core-sdk]
     F -->|Uses| G
+    J -->|Uses| G
+    K -->|Uses| G
+    L -->|Uses| G
+    M -->|Uses| G
 
     D -->|Executes Sidecar| H[Python/JS Sidecar]
     H -->|Saves Parquet| I[Storage]

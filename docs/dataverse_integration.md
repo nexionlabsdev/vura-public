@@ -4,10 +4,10 @@ This document details how VURA writes data *back* into Dynamics 365 (Dataverse).
 
 While SQL is used for querying (via TDS endpoint), Dataverse is strictly read-only through TDS. To solve this, the integration uses the Dataverse Web API (OData V4) to perform inserts, updates, and deletes seamlessly.
 
-The integration uses **`packages/vura-dataverse`**, backed by **`packages/vura-dataverse-sync-core`**:
+The integration uses **`packages/connectors/vura-dataverse`**, backed by **`packages/connectors/vura-dataverse-sync-core`**:
 
-- **`packages/vura-dataverse-sync-core`** — the actual `$batch` sync engine: argument parsing, Dataverse metadata lookup, batch chunking/sending, response parsing, HTML result rendering. Depends only on `@vura-data-os/core-sdk`'s host-agnostic types (`FlownbCell`, `ICellLogger`, `IVuraEnvironment`) — no `vscode` import at all.
-- **`packages/vura-dataverse`** — unified package supporting both CLI and VS Code Extension host execution paths (registering `!dataverse.sync`).
+- **`packages/connectors/vura-dataverse-sync-core`** — the actual `$batch` sync engine: argument parsing, Dataverse metadata lookup, batch chunking/sending, response parsing, HTML result rendering. Depends only on `@vura-data-os/core-sdk`'s host-agnostic types (`FlownbCell`, `ICellLogger`, `IVuraEnvironment`) — no `vscode` import at all.
+- **`packages/connectors/vura-dataverse`** — unified package supporting both CLI and VS Code Extension host execution paths (registering `!dataverse.sync`).
 
 ---
 

@@ -8,19 +8,19 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/core-sdk/**'
-      - 'packages/vura-odata-sync-core/**'
-      - 'packages/vura-dataverse-sync-core/**'
-      - 'packages/vura-io/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
+      - 'packages/connectors/vura-dataverse-sync-core/**'
+      - 'packages/core/vura-io/**'
       - 'schemas/**'
       - '.github/workflows/ci-libs.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'packages/core-sdk/**'
-      - 'packages/vura-odata-sync-core/**'
-      - 'packages/vura-dataverse-sync-core/**'
-      - 'packages/vura-io/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
+      - 'packages/connectors/vura-dataverse-sync-core/**'
+      - 'packages/core/vura-io/**'
       - 'schemas/**'
       - '.github/workflows/ci-libs.yml'
   workflow_dispatch: {}
@@ -47,18 +47,18 @@ jobs:
       - run: npm install --no-audit --no-fund
 
       - name: Build core-sdk
-        run: npm run compile --workspace=packages/core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
 
       - name: Build and test vura-odata-sync-core
         run: |
-          npm run compile --workspace=packages/vura-odata-sync-core
-          npm test --workspace=packages/vura-odata-sync-core
+          npm run compile --workspace=packages/core/vura-odata-sync-core
+          npm test --workspace=packages/core/vura-odata-sync-core
 
       # No test script defined on this package yet — build only.
       - name: Build vura-dataverse-sync-core
-        run: npm run compile --workspace=packages/vura-dataverse-sync-core
+        run: npm run compile --workspace=packages/connectors/vura-dataverse-sync-core
 
       - name: Build and test vura-io (shredder, schema, and partitioning contracts)
         run: |
-          npm run compile --workspace=packages/vura-io
-          npm test --workspace=packages/vura-io
+          npm run compile --workspace=packages/core/vura-io
+          npm test --workspace=packages/core/vura-io

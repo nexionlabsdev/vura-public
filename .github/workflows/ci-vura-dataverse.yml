@@ -6,16 +6,16 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/vura-dataverse/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-odata-sync-core/**'
+      - 'packages/connectors/vura-dataverse/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
       - '.github/workflows/ci-vura-dataverse.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'packages/vura-dataverse/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-odata-sync-core/**'
+      - 'packages/connectors/vura-dataverse/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
       - '.github/workflows/ci-vura-dataverse.yml'
   workflow_dispatch: {}
 
@@ -43,13 +43,13 @@ jobs:
       # Dependency order matters: vura-dataverse imports the compiled `out/`
       # of these via npm workspace symlinks.
       - name: Build core-sdk
-        run: npm run compile --workspace=packages/core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
 
       - name: Build vura-odata-sync-core
-        run: npm run compile --workspace=packages/vura-odata-sync-core
+        run: npm run compile --workspace=packages/core/vura-odata-sync-core
 
       - name: Build vura-dataverse
-        run: npm run compile --workspace=packages/vura-dataverse
+        run: npm run compile --workspace=packages/connectors/vura-dataverse
 
       - name: Run vura-dataverse test suite
-        run: npm test --workspace=packages/vura-dataverse
+        run: npm test --workspace=packages/connectors/vura-dataverse

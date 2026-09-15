@@ -3,8 +3,8 @@ const path = require('path');
 const ts = require('typescript');
 
 const rootDir = path.resolve(__dirname, '..');
-const ioSrcDir = path.join(rootDir, 'packages', 'vura-io', 'src');
-const runnerAssetsDir = path.join(rootDir, 'packages', 'vura-runner', 'src', 'assets');
+const ioSrcDir = path.join(rootDir, 'packages', 'core', 'vura-io', 'src');
+const runnerAssetsDir = path.join(rootDir, 'packages', 'core', 'vura-runner', 'src', 'assets');
 
 function transpileFile(filePath) {
     const code = fs.readFileSync(filePath, 'utf-utf-8' in Buffer ? 'utf-8' : 'utf8');
@@ -291,4 +291,4 @@ main();
 
 const updatedSidecar = header + combined + '\n' + runnerCode;
 fs.writeFileSync(path.join(runnerAssetsDir, 'sidecar.js'), updatedSidecar);
-console.log('Generated clean packages/vura-runner/src/assets/sidecar.js');
+console.log('Generated clean packages/core/vura-runner/src/assets/sidecar.js');

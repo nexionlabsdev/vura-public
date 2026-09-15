@@ -38,7 +38,7 @@ cells:
 
       import pandas as pd\r
 
-      df = data.get(\"cell_1\")\r
+      df = data.get(\"cell_2\")\r
 
       for row in df.itertuples():\r
 
@@ -88,7 +88,7 @@ cells:
       SELECT * FROM accounts;
     metadata:
       tableName: accounts
-      connectionId: local-sql-server-7043
+      connectionId: local-sql-server-0681
       connectionName: Local SQL Server
   - kind: 2
     language: sql
@@ -97,7 +97,7 @@ cells:
       SELECT * FROM contacts;
     metadata:
       connectionName: Local SQL Server
-      connectionId: local-sql-server-7043
+      connectionId: local-sql-server-0681
   - kind: 2
     language: vura-terminal
     value: '!ingest-file "nested_data.json" json -> ingest_nested_data'

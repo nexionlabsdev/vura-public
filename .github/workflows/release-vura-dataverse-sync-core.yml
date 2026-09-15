@@ -54,7 +54,7 @@ jobs:
         run: |
           node -e "
             const fs = require('fs');
-            const path = 'packages/vura-dataverse-sync-core/package.json';
+            const path = 'packages/connectors/vura-dataverse-sync-core/package.json';
             const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
             pkg.version = '${{ inputs.version }}';
             for (const dep of Object.keys(pkg.dependencies || {})) {
@@ -64,15 +64,15 @@ jobs:
           "
 
       - name: Build core-sdk
-        run: npm run compile --workspace=packages/core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
 
       - name: Build vura-dataverse-sync-core
-        run: npm run compile --workspace=packages/vura-dataverse-sync-core
+        run: npm run compile --workspace=packages/connectors/vura-dataverse-sync-core
 
       - name: Publish (skips if this version is already on npm)
         run: |
           set -e
-          cd packages/vura-dataverse-sync-core
+          cd packages/connectors/vura-dataverse-sync-core
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then

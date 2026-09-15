@@ -54,7 +54,7 @@ jobs:
         run: |
           node -e "
             const fs = require('fs');
-            const path = 'packages/vura-runner/package.json';
+            const path = 'packages/core/vura-runner/package.json';
             const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
             pkg.version = '${{ inputs.version }}';
             for (const dep of Object.keys(pkg.dependencies || {})) {
@@ -66,19 +66,19 @@ jobs:
       # Dependency order: vura-runner imports the compiled `out/` of these
       # via npm workspace symlinks.
       - name: Build core-sdk
-        run: npm run compile --workspace=packages/core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
       - name: Build vura-io
-        run: npm run compile --workspace=packages/vura-io
+        run: npm run compile --workspace=packages/core/vura-io
       - name: Build vura-runner
-        run: npm run compile --workspace=packages/vura-runner
+        run: npm run compile --workspace=packages/core/vura-runner
 
       - name: Test vura-runner
-        run: npm test --workspace=packages/vura-runner
+        run: npm test --workspace=packages/core/vura-runner
 
       - name: Publish (skips if this version is already on npm)
         run: |
           set -e
-          cd packages/vura-runner
+          cd packages/core/vura-runner
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then

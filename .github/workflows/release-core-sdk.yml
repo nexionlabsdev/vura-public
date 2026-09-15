@@ -53,19 +53,19 @@ jobs:
         run: |
           node -e "
             const fs = require('fs');
-            const path = 'packages/core-sdk/package.json';
+            const path = 'packages/core/core-sdk/package.json';
             const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
             pkg.version = '${{ inputs.version }}';
             fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
           "
 
       - name: Build core-sdk
-        run: npm run compile --workspace=packages/core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
 
       - name: Publish (skips if this version is already on npm)
         run: |
           set -e
-          cd packages/core-sdk
+          cd packages/core/core-sdk
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
           if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then

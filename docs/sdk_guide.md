@@ -28,7 +28,11 @@ flowchart TD
 
 All first-party connector Add-ons must follow the `!{connector}.{action}` namespacing convention for their magic commands:
 - **Dataverse**: `!dataverse.sync`
-- **SharePoint**: `!sharepoint.sync`
+- **SharePoint**: `!sharepoint.sync`, `!sharepoint.import`, `!sharepoint.export`
+- **OneDrive**: `!onedrive.import`, `!onedrive.export`
+- **Google Drive**: `!googledrive.import`, `!googledrive.export`
+- **S3**: `!s3.import`, `!s3.export`, `!s3.list`
+- **Local / mapped folder**: `!local.import`, `!local.export`
 
 *Note on dispatch behavior:* `ProviderRegistry.getProviderForCommand()` remains flat-first-match (no runtime namespacing enforcement) — this convention is enforced by team discipline, consistent with connectors being first-party.
 
@@ -42,7 +46,47 @@ These describe everything a provider needs from its host, without depending on `
 
 *   **`FlownbCell`**: `{ kind, language, value, metadata? }` — a notebook cell, independent of the host's own cell representation.
 *   **`ICellLogger`**: `logText`, `logError`, `logHtml`, `logJson`, `replaceOutput`, `logMultiple`, `clearOutput` — the output sink your command writes to.
-*   **`IVuraEnvironment`**: `storagePath`, `notebookDir`, `getConfig`, `getProfile`/`getProfileSecret` (SQL connection profiles), `getSecret`/`setSecret`/`deleteSecret` (generic Add-on secrets), `runLocalQuery` (query the shared DuckDB instance), `getPythonVenvPath`, and more.
+*   **`IVuraEnvironment`**: `storagePath`, `notebookDir`, `getConfig`, `getProfile`/`getProfileSecret` (legacy SQL-shaped connection profiles), `getConnectionProfile`/`listConnectionProfiles` (generic `ConnectionProfile` — the model every non-SQL connector kind should use; secrets are still read via `getProfileSecret(profileId)`, which is keyed by profile id regardless of shape), `getSecret`/`setSecret`/`deleteSecret` (generic Add-on secrets), `runLocalQuery` (query the shared DuckDB instance), `getPythonVenvPath`, and more.
+
+### `ConnectionProfile` and `IStorageProvider`
+
+Every connector besides plain SQL should describe its connections as a `ConnectionProfile` rather than overloading `SqlProfile`:
+
+```typescript
+export interface ConnectionProfile<TConfig = Record<string, any>> {
+    id: string;
+    name: string;
+    kind: ConnectorKind;   // 'sharepoint' | 'onedrive' | 'googledrive' | 's3' | 'local' | 'dataverse' | ...
+    config: TConfig;       // kind-specific, non-secret fields (tenantId, bucket, basePath, ...)
+}
+```
+
+Declare your Add-on's kind and the fields the host's generic connection-settings UI should render for it by implementing two optional `IVuraProvider` methods:
+
+```typescript
+getConnectorKind(): ConnectorKind {
+    return 'myconnector';
+}
+getConnectionFields(): ConnectionField[] {
+    return [
+        { key: 'endpoint', label: 'Endpoint URL', type: 'text' },
+        { key: 'apiKey', label: 'API Key', type: 'password', secret: true }
+    ];
+}
+```
+
+If your Add-on lets users import/export files (as opposed to syncing rows to a remote entity, like Dataverse/SharePoint Lists do), also implement `IStorageProvider`:
+
+```typescript
+export interface IStorageProvider {
+    listFiles(connectionId: string, folderPath: string): Promise<StorageEntry[]>;
+    readFile(connectionId: string, filePath: string): Promise<Buffer>;
+    writeFile(connectionId: string, filePath: string, content: Buffer, mime?: string): Promise<void>;
+    deleteFile?(connectionId: string, filePath: string): Promise<void>;
+}
+```
+
+`packages/connectors/vura-local`, `packages/connectors/vura-s3`, `packages/connectors/vura-onedrive`, `packages/connectors/vura-googledrive`, and `packages/connectors/vura-sharepoint` (document library support) are reference implementations of both `getConnectionFields()` and `IStorageProvider`.
 
 ### `IVuraProvider`
 

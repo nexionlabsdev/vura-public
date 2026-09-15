@@ -32,7 +32,7 @@ jobs:
       - name: Install Python benchmark dependencies
         run: |
           pip install pandas pyarrow duckdb pytest
-          cd packages/vura-io-py
+          cd packages/core/vura-io-py
           pip install -e .
 
       - name: Run 100M Benchmark Tier

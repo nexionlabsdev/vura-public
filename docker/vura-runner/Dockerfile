@@ -38,14 +38,14 @@ COPY packages/ ./packages/
 
 RUN npm ci --omit=dev
 
-COPY packages/vura-io-py /tmp/vura-io-py
+COPY packages/core/vura-io-py /tmp/vura-io-py
 RUN /opt/vura/venv/bin/pip install --no-cache-dir pandas pyarrow duckdb jsonschema /tmp/vura-io-py && rm -rf /tmp/vura-io-py
 
 COPY --from=builder /build/packages /opt/vura/app/packages
 COPY --from=builder /build/dist/plugins-catalog /opt/vura/plugins-catalog
 COPY --from=builder /build/docker/plugins-catalog.json /opt/vura/plugins-catalog.json
 
-RUN npm link ./packages/vura-runner
+RUN npm link ./packages/core/vura-runner
 
 COPY docker/vura-runner/docker-entrypoint.sh /opt/vura/docker-entrypoint.sh
 RUN chmod +x /opt/vura/docker-entrypoint.sh

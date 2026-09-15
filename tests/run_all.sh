@@ -7,7 +7,7 @@ echo "============================================================"
 
 # 1. Compile TypeScript runner
 echo "--> Compiling vura-runner TypeScript packages..."
-npm --prefix packages/vura-runner run compile
+npm --prefix packages/core/vura-runner run compile
 
 # 2. Generate 10 parameterized flows
 echo "--> Generating 10 sample .flownb notebooks (10K records each)..."

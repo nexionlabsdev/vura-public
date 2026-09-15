@@ -49,10 +49,10 @@ Run all three cells. If the third cell logs a row count, the DuckDB/Parquet IPC 
 
 ## 3. Running notebooks headlessly
 
-Use `packages/vura-runner` to execute a `.flownb` file outside VS Code, e.g. from a CI job or a script:
+Use `packages/core/vura-runner` to execute a `.flownb` file outside VS Code, e.g. from a CI job or a script:
 
 ```bash
-cd packages/vura-runner
+cd packages/core/vura-runner
 npm run compile
 node out/cli.js run ../../example.flownb
 ```

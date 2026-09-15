@@ -7,16 +7,16 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/vura-runner/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-io/**'
+      - 'packages/core/vura-runner/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-io/**'
       - '.github/workflows/ci-vura-runner.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'packages/vura-runner/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-io/**'
+      - 'packages/core/vura-runner/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-io/**'
       - '.github/workflows/ci-vura-runner.yml'
   workflow_dispatch: {}
 
@@ -50,13 +50,13 @@ jobs:
       # Dependency order matters: vura-runner imports the compiled `out/` of
       # these via npm workspace symlinks.
       - name: Build core-sdk
-        run: npm run compile --workspace=packages/core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
 
       - name: Build vura-io
-        run: npm run compile --workspace=packages/vura-io
+        run: npm run compile --workspace=packages/core/vura-io
 
       - name: Build vura-runner
-        run: npm run compile --workspace=packages/vura-runner
+        run: npm run compile --workspace=packages/core/vura-runner
 
       - name: Run vura-runner test suite
-        run: npm test --workspace=packages/vura-runner
+        run: npm test --workspace=packages/core/vura-runner

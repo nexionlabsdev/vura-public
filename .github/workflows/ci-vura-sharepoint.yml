@@ -6,16 +6,16 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/vura-sharepoint/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-odata-sync-core/**'
+      - 'packages/connectors/vura-sharepoint/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
       - '.github/workflows/ci-vura-sharepoint.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'packages/vura-sharepoint/**'
-      - 'packages/core-sdk/**'
-      - 'packages/vura-odata-sync-core/**'
+      - 'packages/connectors/vura-sharepoint/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
       - '.github/workflows/ci-vura-sharepoint.yml'
   workflow_dispatch: {}
 
@@ -43,13 +43,13 @@ jobs:
       # Dependency order matters: vura-sharepoint imports the compiled `out/`
       # of these via npm workspace symlinks.
       - name: Build core-sdk
-        run: npm run compile --workspace=packages/core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
 
       - name: Build vura-odata-sync-core
-        run: npm run compile --workspace=packages/vura-odata-sync-core
+        run: npm run compile --workspace=packages/core/vura-odata-sync-core
 
       - name: Build vura-sharepoint
-        run: npm run compile --workspace=packages/vura-sharepoint
+        run: npm run compile --workspace=packages/connectors/vura-sharepoint
 
       - name: Run vura-sharepoint test suite
-        run: npm test --workspace=packages/vura-sharepoint
+        run: npm test --workspace=packages/connectors/vura-sharepoint

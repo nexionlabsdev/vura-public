@@ -28,19 +28,22 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-PLUGINS=$(node -e '
+# Connectors live under packages/connectors/<key> (see docker/plugins-catalog.json's
+# "connectors" section — core libraries and Docker images are catalogued
+# alongside it but aren't "plugins" this script stages/packages).
+CONNECTORS=$(node -e '
   const fs = require("fs");
   const catalog = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  console.log(JSON.stringify(catalog));
+  console.log(JSON.stringify(catalog.connectors || {}));
 ' "$CATALOG_FILE")
 
 plugin_keys=$(node -e '
-  const catalog = JSON.parse(process.argv[1]);
-  console.log(Object.keys(catalog).join(" "));
-' "$PLUGINS")
+  const connectors = JSON.parse(process.argv[1]);
+  console.log(Object.keys(connectors).join(" "));
+' "$CONNECTORS")
 
 for key in $plugin_keys; do
-  pkg_dir="$ROOT_DIR/packages/$key"
+  pkg_dir="$ROOT_DIR/packages/connectors/$key"
   if [ ! -d "$pkg_dir" ]; then
     echo "Error: Package directory $pkg_dir missing for catalog key $key" >&2
     exit 1
@@ -52,12 +55,12 @@ for key in $plugin_keys; do
     cp -r "$pkg_dir"/* "$OUT_DIR/$key/"
   elif [ "$MODE" = "vsix" ]; then
     vsix_name=$(node -e '
-      const catalog = JSON.parse(process.argv[1]);
-      console.log(catalog[process.argv[2]].vsixName);
-    ' "$PLUGINS" "$key")
+      const connectors = JSON.parse(process.argv[1]);
+      console.log(connectors[process.argv[2]].vsixName);
+    ' "$CONNECTORS" "$key")
     echo "==> Packaging VSIX plugin: $key -> $OUT_DIR/$vsix_name"
-    bash "$ROOT_DIR/scripts/install-local-deps.sh" "$key"
-    bash "$ROOT_DIR/scripts/package-extension.sh" "$key" -o "$OUT_DIR/$vsix_name"
+    bash "$ROOT_DIR/scripts/install-local-deps.sh" "connectors/$key"
+    bash "$ROOT_DIR/scripts/package-extension.sh" "connectors/$key" -o "$OUT_DIR/$vsix_name"
   else
     echo "Unknown mode: $MODE" >&2
     exit 1

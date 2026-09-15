@@ -14,8 +14,8 @@ RUN bash ./docker/generate-catalog-manifest.sh
 RUN npm ci
 RUN npm run compile --workspaces --if-present
 
-RUN bash ./scripts/install-local-deps.sh core-extension && \
-    bash ./scripts/package-extension.sh core-extension -o /build/dist/vura-core.vsix
+RUN bash ./scripts/install-local-deps.sh core/core-extension && \
+    bash ./scripts/package-extension.sh core/core-extension -o /build/dist/vura-core.vsix
 
 RUN bash ./docker/build-plugins.sh --mode=vsix --out-dir=/build/dist/plugins-catalog
 
@@ -37,7 +37,7 @@ RUN python3.11 -m venv /opt/vura/venv
 ENV PATH="/opt/vura/venv/bin:$PATH"
 ENV VURA_PYTHON_VENV_PATH="/opt/vura/venv"
 
-COPY packages/vura-io-py /tmp/vura-io-py
+COPY packages/core/vura-io-py /tmp/vura-io-py
 RUN /opt/vura/venv/bin/pip install --no-cache-dir pandas pyarrow duckdb jsonschema /tmp/vura-io-py && rm -rf /tmp/vura-io-py
 
 COPY --from=builder /build/dist/vura-core.vsix /tmp/vura-core.vsix
