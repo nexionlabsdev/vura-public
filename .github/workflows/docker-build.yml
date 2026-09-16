@@ -47,7 +47,7 @@ jobs:
           fi
           docker rm -f runner-no-plugins
 
-      - name: Test vura-runner (env var: VURA_PLUGINS=vura-dataverse)
+      - name: "Test vura-runner (env var: VURA_PLUGINS=vura-dataverse)"
         run: |
           docker run -d --name runner-env-plugin -p 3001:3000 -e VURA_PLUGINS=vura-dataverse vura-runner:test
           sleep 5
@@ -60,7 +60,7 @@ jobs:
           fi
           docker rm -f runner-env-plugin
 
-      - name: Test vura-runner (CLI flag: --plugins=vura-dataverse)
+      - name: "Test vura-runner (CLI flag: --plugins=vura-dataverse)"
         run: |
           docker run -d --name runner-flag-plugin -p 3002:3000 vura-runner:test --plugins=vura-dataverse
           sleep 5
@@ -73,7 +73,7 @@ jobs:
           fi
           docker rm -f runner-flag-plugin
 
-      - name: Test vura-runner (env var: VURA_PLUGINS=vura-sharepoint)
+      - name: "Test vura-runner (env var: VURA_PLUGINS=vura-sharepoint)"
         run: |
           docker run -d --name runner-env-sharepoint -p 3003:3000 -e VURA_PLUGINS=vura-sharepoint vura-runner:test
           sleep 5
@@ -86,7 +86,7 @@ jobs:
           fi
           docker rm -f runner-env-sharepoint
 
-      - name: Test vura-runner (CLI flag: --plugins=vura-sharepoint)
+      - name: "Test vura-runner (CLI flag: --plugins=vura-sharepoint)"
         run: |
           docker run -d --name runner-flag-sharepoint -p 3004:3000 vura-runner:test --plugins=vura-sharepoint
           sleep 5
@@ -107,7 +107,7 @@ jobs:
           curl -sI http://localhost:8080 | head -n 1
           docker rm -f studio-no-plugins
 
-      - name: Test vura-web-studio (env var: VURA_PLUGINS=vura-dataverse)
+      - name: "Test vura-web-studio (env var: VURA_PLUGINS=vura-dataverse)"
         run: |
           docker run -d --name studio-env-plugin -p 8081:8080 -e PASSWORD=testpass -e VURA_PLUGINS=vura-dataverse vura-web-studio:test
           sleep 5
@@ -119,7 +119,7 @@ jobs:
           fi
           docker rm -f studio-env-plugin
 
-      - name: Test vura-web-studio (CLI flag: --plugins=vura-dataverse)
+      - name: "Test vura-web-studio (CLI flag: --plugins=vura-dataverse)"
         run: |
           docker run -d --name studio-flag-plugin -p 8082:8080 -e PASSWORD=testpass vura-web-studio:test --plugins=vura-dataverse
           sleep 5
@@ -131,7 +131,7 @@ jobs:
           fi
           docker rm -f studio-flag-plugin
 
-      - name: Test vura-web-studio (env var: VURA_PLUGINS=vura-sharepoint)
+      - name: "Test vura-web-studio (env var: VURA_PLUGINS=vura-sharepoint)"
         run: |
           docker run -d --name studio-env-sharepoint -p 8083:8080 -e PASSWORD=testpass -e VURA_PLUGINS=vura-sharepoint vura-web-studio:test
           sleep 5
@@ -143,7 +143,7 @@ jobs:
           fi
           docker rm -f studio-env-sharepoint
 
-      - name: Test vura-web-studio (CLI flag: --plugins=vura-sharepoint)
+      - name: "Test vura-web-studio (CLI flag: --plugins=vura-sharepoint)"
         run: |
           docker run -d --name studio-flag-sharepoint -p 8084:8080 -e PASSWORD=testpass vura-web-studio:test --plugins=vura-sharepoint
           sleep 5
