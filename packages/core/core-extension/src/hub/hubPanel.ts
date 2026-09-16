@@ -163,6 +163,14 @@ export class HubPanel {
                 await ConnectionManager.setWorkspaceMirrorEnabled(this.context, !!data.enabled);
                 await this.pushState('refresh');
                 break;
+            case 'setActiveProfile':
+                // Only 'sql' profiles have an "active" concept — Schema Explorer, SQL
+                // IntelliSense, and the status bar all read ConnectionManager's single active
+                // SqlProfile, independent of whatever's selected/being-edited in this panel.
+                await ConnectionManager.setActiveProfile(this.context, data.id);
+                vscode.window.showInformationMessage('Active connection updated — Schema Explorer will refresh.');
+                await this.pushState('refresh');
+                break;
             case 'toggleAddonEnabled':
                 if (data.providerId) {
                     ProviderRegistry.getInstance().setProviderEnabled(data.providerId, !!data.enabled);
@@ -250,6 +258,7 @@ export class HubPanel {
                 pythonPackages,
                 kinds: getConnectorKindDescriptors(),
                 profiles: ConnectionManager.getAllConnectionProfiles(this.context),
+                activeProfileId: ConnectionManager.getActiveProfileId(this.context),
                 mirrorEnabled: ConnectionManager.isWorkspaceMirrorEnabled(this.context),
                 cacheDirectoryConfigKey: CACHE_DIRECTORY_CONFIG_KEY
             }

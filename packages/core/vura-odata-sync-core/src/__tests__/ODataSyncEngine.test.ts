@@ -41,6 +41,224 @@ describe('Phase 9a: ODataSyncEngine', () => {
         };
     });
 
+    it('sends the upsert PATCH without an If-Match header, so it creates when the key does not already exist', async () => {
+        let capturedBody = '';
+        const originalFetch = global.fetch;
+        try {
+            global.fetch = jest.fn().mockImplementation(async (url: string, init?: any) => {
+                capturedBody += (init?.body || '') + '\n---\n';
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => `--batch_x\r\nContent-Type: multipart/mixed; boundary=changeset_x\r\n\r\n--changeset_x\r\nContent-Type: application/http\r\nContent-ID: 1\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n--changeset_x--\r\n--batch_x--`
+                } as any;
+            });
+
+            await ODataSyncEngine.sendBatchRequest({
+                endpointUrl: 'https://org.crm.dynamics.com/api/data/v9.2',
+                entitySetName: 'accounts',
+                keyColumns: ['accountid'],
+                keyType: 'primary',
+                mode: 'upsert',
+                records: [{ accountid: '3fa85f64-5717-4562-b3fc-2c963f66afa6', name: 'Contoso' }],
+                validColumns: ['accountid', 'name'],
+                token: 'test_token',
+                globalOffset: 0
+            });
+
+            expect(capturedBody).toContain('PATCH https://org.crm.dynamics.com/api/data/v9.2/accounts(3fa85f64-5717-4562-b3fc-2c963f66afa6) HTTP/1.1');
+            expect(capturedBody).not.toContain('If-Match');
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('addresses a record by its bare (unquoted) GUID primary key, and OData-escapes alternate string keys', async () => {
+        let capturedBody = '';
+        const originalFetch = global.fetch;
+        try {
+            global.fetch = jest.fn().mockImplementation(async (url: string, init?: any) => {
+                capturedBody += (init?.body || '') + '\n---\n';
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => `--batch_x\r\nContent-Type: multipart/mixed; boundary=changeset_x\r\n\r\n--changeset_x\r\nContent-Type: application/http\r\nContent-ID: 1\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n--changeset_x--\r\n--batch_x--`
+                } as any;
+            });
+
+            // Primary-key upsert: the id is a GUID-shaped string.
+            await ODataSyncEngine.sendBatchRequest({
+                endpointUrl: 'https://org.crm.dynamics.com/api/data/v9.2',
+                entitySetName: 'accounts',
+                keyColumns: ['accountid'],
+                keyType: 'primary',
+                mode: 'upsert',
+                records: [{ accountid: '3fa85f64-5717-4562-b3fc-2c963f66afa6', name: 'Contoso' }],
+                validColumns: ['accountid', 'name'],
+                token: 'test_token',
+                globalOffset: 0
+            });
+
+            expect(capturedBody).toContain(
+                "PATCH https://org.crm.dynamics.com/api/data/v9.2/accounts(3fa85f64-5717-4562-b3fc-2c963f66afa6) HTTP/1.1"
+            );
+            expect(capturedBody).not.toContain("accounts('3fa85f64");
+
+            capturedBody = '';
+
+            // Alternate-key upsert: a string business key containing an embedded single quote.
+            await ODataSyncEngine.sendBatchRequest({
+                endpointUrl: 'https://org.crm.dynamics.com/api/data/v9.2',
+                entitySetName: 'accounts',
+                keyColumns: ['accountnumber'],
+                keyType: 'alternate',
+                mode: 'upsert',
+                records: [{ accountnumber: "O'Brien Ltd", name: "O'Brien Ltd" }],
+                validColumns: ['accountnumber', 'name'],
+                token: 'test_token',
+                globalOffset: 0
+            });
+
+            expect(capturedBody).toContain("accounts(accountnumber='O''Brien Ltd')");
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('rewrites lookup columns as @odata.bind instead of a raw scalar value', async () => {
+        let capturedBody = '';
+        const originalFetch = global.fetch;
+        try {
+            global.fetch = jest.fn().mockImplementation(async (url: string, init?: any) => {
+                capturedBody += (init?.body || '') + '\n---\n';
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => `--batch_x\r\nContent-Type: multipart/mixed; boundary=changeset_x\r\n\r\n--changeset_x\r\nContent-Type: application/http\r\nContent-ID: 1\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n--changeset_x--\r\n--batch_x--`
+                } as any;
+            });
+
+            await ODataSyncEngine.sendBatchRequest({
+                endpointUrl: 'https://org.crm.dynamics.com/api/data/v9.2',
+                entitySetName: 'accounts',
+                keyColumns: ['accountid'],
+                keyType: 'primary',
+                mode: 'upsert',
+                records: [{
+                    accountid: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+                    name: 'Contoso',
+                    transactioncurrencyid: '11111111-1111-1111-1111-111111111111'
+                }],
+                validColumns: ['accountid', 'name', 'transactioncurrencyid'],
+                lookupAttributes: { transactioncurrencyid: 'transactioncurrencies' },
+                token: 'test_token',
+                globalOffset: 0
+            });
+
+            expect(capturedBody).toContain('"transactioncurrencyid@odata.bind":"/transactioncurrencies(11111111-1111-1111-1111-111111111111)"');
+            expect(capturedBody).not.toMatch(/"transactioncurrencyid":/);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('resolves the polymorphic ownerid lookup to systemuser by default, and leaves other polymorphic lookups unresolved', async () => {
+        let capturedBody = '';
+        const originalFetch = global.fetch;
+        try {
+            global.fetch = jest.fn().mockImplementation(async (url: string, init?: any) => {
+                capturedBody += (init?.body || '') + '\n---\n';
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => `--batch_x\r\nContent-Type: multipart/mixed; boundary=changeset_x\r\n\r\n--changeset_x\r\nContent-Type: application/http\r\nContent-ID: 1\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n--changeset_x--\r\n--batch_x--`
+                } as any;
+            });
+
+            const ownerPolymorphicTargets = [
+                { logicalName: 'systemuser', entitySetName: 'systemusers' },
+                { logicalName: 'team', entitySetName: 'teams' }
+            ];
+            const customerPolymorphicTargets = [
+                { logicalName: 'account', entitySetName: 'accounts' },
+                { logicalName: 'contact', entitySetName: 'contacts' }
+            ];
+
+            await ODataSyncEngine.sendBatchRequest({
+                endpointUrl: 'https://org.crm.dynamics.com/api/data/v9.2',
+                entitySetName: 'accounts',
+                keyColumns: ['accountid'],
+                keyType: 'primary',
+                mode: 'upsert',
+                records: [{
+                    accountid: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+                    ownerid: '22222222-2222-2222-2222-222222222222',
+                    // No local column can tell us which entity this belongs to — a genuinely
+                    // ambiguous polymorphic lookup other than ownerid stays unresolved.
+                    customerid: '44444444-4444-4444-4444-444444444444'
+                }],
+                validColumns: ['accountid', 'ownerid', 'customerid'],
+                polymorphicLookupAttributes: { ownerid: ownerPolymorphicTargets, customerid: customerPolymorphicTargets },
+                token: 'test_token',
+                globalOffset: 0
+            });
+
+            expect(capturedBody).toContain('"ownerid@odata.bind":"/systemusers(22222222-2222-2222-2222-222222222222)"');
+            expect(capturedBody).toContain('"customerid":"44444444-4444-4444-4444-444444444444"');
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('excludes attributes not writable for the current operation (per real EntityDefinitions metadata), even when the name looks legitimate', async () => {
+        const originalFetch = global.fetch;
+        try {
+            global.fetch = jest.fn().mockImplementation(async (url: string) => {
+                if (url.endsWith('/$batch')) {
+                    return {
+                        ok: true,
+                        status: 200,
+                        text: async () => `--batch_x\r\nContent-Type: multipart/mixed; boundary=changeset_x\r\n\r\n--changeset_x\r\nContent-Type: application/http\r\nContent-ID: 1\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n--changeset_x--\r\n--batch_x--`
+                    } as any;
+                }
+                return { ok: false, status: 404 } as any;
+            });
+
+            const result = await ODataSyncEngine.sync({
+                baseUrl: 'https://org.crm.dynamics.com',
+                getToken: async () => 'test_bearer_token',
+                source: 'my_local_table',
+                target: 'accounts',
+                mode: 'upsert',
+                apiPathPrefix: '/api/data/v9.2',
+                fetchMetadata: async () => ({
+                    primaryIdAttribute: 'accountid',
+                    entitySetName: 'accounts',
+                    alternateKeys: [],
+                    // 'owneridtype' is a REAL Dataverse attribute name (not a typo/unmapped
+                    // column) — it exists in metadata but is read-only, so it must be excluded
+                    // by writability, not by a "do we recognize this name" check.
+                    attributes: ['accountid', 'name', 'owneridtype'],
+                    attributeWritability: {
+                        accountid: { validForCreate: false, validForUpdate: false },
+                        name: { validForCreate: true, validForUpdate: true },
+                        owneridtype: { validForCreate: false, validForUpdate: false }
+                    }
+                }),
+                env: {
+                    ...mockEnv,
+                    runLocalQuery: async () => [{ accountid: '3fa85f64-5717-4562-b3fc-2c963f66afa6', name: 'Contoso', owneridtype: 'systemuser' }]
+                },
+                logger: mockLogger
+            });
+
+            expect(result.skippedColumns).toContain('owneridtype');
+            expect(mockLogs.some(l => l.includes('non-writable column'))).toBe(true);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
     it('parses batch response correctly', () => {
         const responseText = `--batch_123
 Content-Type: multipart/mixed; boundary=changeset_123
@@ -131,7 +349,7 @@ HTTP/1.1 204 No Content
             expect(result.errors).toHaveLength(0);
 
             expect(mockLogs.some(l => l.includes('Key resolved: "id"'))).toBe(true);
-            expect(mockLogs.some(l => l.includes('Skipping 1 unmapped column'))).toBe(true);
+            expect(mockLogs.some(l => l.includes('Skipping 1 unmapped/non-writable column'))).toBe(true);
             expect(mockLogs.some(l => l.includes('OUTPUT:'))).toBe(true);
         } finally {
             global.fetch = originalFetch;

@@ -241,6 +241,15 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
                     });
                     break;
                 }
+                case 'setActiveProfile': {
+                    // Only 'sql' profiles have an "active" concept — Schema Explorer, SQL
+                    // IntelliSense, and the status bar all read ConnectionManager's single
+                    // active SqlProfile, independent of whatever's selected/being-edited here.
+                    await ConnectionManager.setActiveProfile(this._context, data.id);
+                    vscode.window.showInformationMessage('Active connection updated — Schema Explorer will refresh.');
+                    await this._sendDataToWebview();
+                    break;
+                }
             }
         });
 
@@ -286,19 +295,20 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
         this._view?.webview.postMessage({
             type: 'init',
             kinds: this._getKinds(),
-            // A single flat list across every kind (SQL included) — includes the
-            // legacy-SqlProfile-as-Dataverse bridge (see
-            // ConnectionManager.getAllConnectionProfiles) so pre-migration
-            // Dataverse connections show up here too; saving one through this
-            // panel upgrades it to a first-class 'dataverse' ConnectionProfile.
-            profiles: ConnectionManager.getAllConnectionProfiles(this._context)
+            // A single flat list across every kind, SQL included.
+            profiles: ConnectionManager.getAllConnectionProfiles(this._context),
+            // Only meaningful for kind 'sql' — the Schema Explorer / SQL IntelliSense / status
+            // bar all read whichever SqlProfile this points at, independent of which profile
+            // happens to be selected/being-edited in this panel.
+            activeProfileId: ConnectionManager.getActiveProfileId(this._context)
         });
     }
 
     private _sendProfilesToWebview() {
         this._view?.webview.postMessage({
             type: 'loadAllProfiles',
-            profiles: ConnectionManager.getAllConnectionProfiles(this._context)
+            profiles: ConnectionManager.getAllConnectionProfiles(this._context),
+            activeProfileId: ConnectionManager.getActiveProfileId(this._context)
         });
     }
 
@@ -442,11 +452,14 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
 
   <div id="sqlTestResult" class="test-result"></div>
 
+  <div id="activeProfileNote" style="font-size:0.82em; margin-top:4px; display:none; color:var(--vscode-descriptionForeground)"></div>
+
   <div class="btn-row">
     <button id="saveBtn">Save Connection</button>
     <button class="secondary" id="testBtn" style="display:none">Test Connection</button>
     <button class="secondary" id="deleteBtn">Delete</button>
     <button class="secondary" id="installExtBtn" style="display:none">Install Extension</button>
+    <button class="secondary" id="setActiveBtn" style="display:none">Set as Active Connection</button>
   </div>
 </div>
 
@@ -459,6 +472,7 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
   let isNewProfile = false;
   let fieldValues = {};
   let lastSelectedProfileId = '';
+  let activeProfileId = '';
 
   window.addEventListener('load', () => vscode.postMessage({ type: 'requestData' }));
 
@@ -467,6 +481,7 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
     if (msg.type === 'init') {
       kinds = msg.kinds;
       allProfiles = msg.profiles;
+      activeProfileId = msg.activeProfileId || '';
       if (kinds.length === 0) {
         document.getElementById('noKinds').style.display = 'block';
         document.getElementById('formArea').style.display = 'none';
@@ -478,6 +493,7 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
       renderProfileList();
     } else if (msg.type === 'loadAllProfiles') {
       allProfiles = msg.profiles;
+      activeProfileId = msg.activeProfileId || '';
       renderProfileList();
     } else if (msg.type === 'connTestResult') {
       showTestResult(msg);
@@ -521,6 +537,23 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
 
     document.getElementById('deleteBtn').textContent = isNewProfile ? 'Cancel' : 'Delete';
 
+    // Only 'sql' has an "active connection" concept — that's what Schema Explorer, SQL
+    // IntelliSense, and the status bar item all read. Selecting/editing a profile here
+    // does NOT change which one they use; this button is the only thing that does.
+    const setActiveBtn = document.getElementById('setActiveBtn');
+    const activeNote = document.getElementById('activeProfileNote');
+    const isSql = currentKind === 'sql' && !isNewProfile;
+    const isActive = isSql && currentProfileId === activeProfileId;
+    setActiveBtn.style.display = (isSql && !isActive) ? 'block' : 'none';
+    if (isSql) {
+      activeNote.style.display = 'block';
+      activeNote.textContent = isActive
+        ? '✓ This is the active connection — Schema Explorer and SQL IntelliSense use it.'
+        : 'This is not the active connection — Schema Explorer/IntelliSense are using a different one.';
+    } else {
+      activeNote.style.display = 'none';
+    }
+
     // New connectors: type is a choice. Existing ones: type is fixed — the
     // config fields it was saved with only make sense for that one kind.
     document.getElementById('kindSelect').style.display = isNewProfile ? 'block' : 'none';
@@ -532,6 +565,12 @@ export class ConnectionsConfigViewProvider implements vscode.WebviewViewProvider
   document.getElementById('installExtBtn').addEventListener('click', e => {
     const extId = e.target.dataset.extId;
     if (extId) vscode.postMessage({ type: 'installProviderExtension', extensionId: extId });
+  });
+
+  document.getElementById('setActiveBtn').addEventListener('click', () => {
+    if (currentKind === 'sql' && !isNewProfile && currentProfileId) {
+      vscode.postMessage({ type: 'setActiveProfile', id: currentProfileId });
+    }
   });
 
   document.getElementById('kindSelect').addEventListener('change', e => {

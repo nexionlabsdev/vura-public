@@ -205,8 +205,8 @@ cells:
         }
       }
     metadata:
-      graphSourceCell: 8
-      graphSourceCellName: cell_8
+      graphSourceCell: 16
+      graphSourceCellName: cell_16
   - kind: 2
     language: html
     value: >

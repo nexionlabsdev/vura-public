@@ -29,6 +29,19 @@ export class SchemaService {
         return this._isLoaded;
     }
 
+    /**
+     * Drops the cached schema so the next getChildren()/completion lookup re-queries
+     * the (now current) active connection instead of silently reusing whatever
+     * connection's tables happened to be cached first. Call this any time the active
+     * connection profile changes or its connection details are edited — without it,
+     * `_isLoaded` stays true forever after the first successful load and the Schema
+     * Explorer / SQL IntelliSense both keep serving the original connection's schema.
+     */
+    public static invalidate(): void {
+        this._isLoaded = false;
+        this._tables = new Map();
+    }
+
     public static async refreshSchema(context: vscode.ExtensionContext): Promise<void> {
         this._outputChannel.appendLine('Refreshing schema...');
         

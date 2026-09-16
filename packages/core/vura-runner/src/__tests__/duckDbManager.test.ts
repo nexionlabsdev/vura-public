@@ -97,6 +97,35 @@ describe('DuckDbManager (@duckdb/node-api)', () => {
         await expect(mgr.runQuery('SELECT * FROM v_sales')).rejects.toThrow();
     });
 
+    it('syncStorageViews does not demote an already-loaded base table into a view over its own parquet export', async () => {
+        const mgr = await DuckDbManager.getInstance(mockEnv);
+        await mgr.runQuery('DROP TABLE IF EXISTS cell_account_seed');
+        await mgr.runQuery('CREATE TABLE cell_account_seed (id INT, name VARCHAR)');
+        await mgr.runQuery("INSERT INTO cell_account_seed VALUES (1, 'Contoso')");
+
+        // Mirrors what executeSql() does after every cell run: export the base table it just
+        // created/updated to a parquet snapshot in storagePath.
+        await mgr.exportTableToParquet('cell_account_seed', tempDir);
+
+        // This runs at the top of every subsequent SQL cell execution. Before the fix, it
+        // unconditionally replaced every table (including cell_account_seed, since its parquet
+        // snapshot is sitting right there) with a read-only VIEW over that snapshot.
+        await mgr.syncStorageViews(mockEnv);
+
+        const tableType = await mgr.runQuery(
+            `SELECT table_type FROM information_schema.tables WHERE table_name = 'cell_account_seed'`
+        );
+        expect(tableType).toEqual([{ table_type: 'BASE TABLE' }]);
+
+        // The actual reported symptom: DuckDB refuses UPDATE/DELETE/INSERT against a view.
+        await expect(
+            mgr.runQuery("UPDATE cell_account_seed SET name = 'Updated' WHERE id = 1")
+        ).resolves.not.toThrow();
+
+        const rows = await mgr.runQuery('SELECT * FROM cell_account_seed');
+        expect(rows).toEqual([{ id: 1, name: 'Updated' }]);
+    });
+
     it('handles queryArrowIPC and saveTableArrowIPC round-trip', async () => {
         const mgr = await DuckDbManager.getInstance(mockEnv);
         await mgr.runQuery('CREATE TABLE ipc_src (id INT, item VARCHAR)');

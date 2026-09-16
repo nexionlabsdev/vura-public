@@ -177,6 +177,16 @@ export class DuckDbManager {
                 const fullPath = path.join(env.storagePath, item);
                 const stat = await fs.stat(fullPath);
                 if (stat.isDirectory()) {
+                    // A table already loaded as a real BASE TABLE in this session (e.g. one a
+                    // prior cell created and then exported to parquet as a persistence
+                    // snapshot) must NOT be re-synced into a VIEW over that same snapshot —
+                    // doing so unconditionally demoted every table back to a read-only view on
+                    // every subsequent cell run, which is why `UPDATE`/`DELETE`/`INSERT` against
+                    // it then failed with "Binder Error: Can only update base table". The
+                    // on-disk parquet is a point-in-time export; the live base table already
+                    // holds whatever's changed since, so it — not the file — is the source of
+                    // truth for the rest of this session.
+                    if (baseTables.has(item)) continue;
                     const manifestPath = path.join(fullPath, 'manifest.json');
                     try {
                         await fs.access(manifestPath);
@@ -184,6 +194,7 @@ export class DuckDbManager {
                     } catch {}
                 } else if (item.endsWith('.parquet') || item.endsWith('.arrow')) {
                     const tableName = item.replace(/\.(parquet|arrow)$/, '');
+                    if (baseTables.has(tableName)) continue;
                     await this.updateView(tableName, fullPath);
                 }
             }

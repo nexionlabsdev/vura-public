@@ -165,11 +165,13 @@ export function getHubHtml(): string {
       <div id="connFieldsArea"></div>
       <div class="vcf-validation-summary" id="connValidationSummary"></div>
       <div class="muted" id="connTestResult" style="margin-top:6px"></div>
+      <div class="muted" id="connActiveNote" style="margin-top:6px; display:none"></div>
       <div class="row-flex" style="margin-top:12px">
         <button id="connSaveBtn">Save Connection</button>
         <button class="secondary" id="connTestBtn">Test Connection</button>
         <button class="danger" id="connDeleteBtn">Delete</button>
         <button class="secondary" id="connInstallExtBtn" style="display:none">Install Extension</button>
+        <button class="secondary" id="connSetActiveBtn" style="display:none">Set as Active Connection</button>
       </div>
     </div>
     <div class="toggle" style="margin-top:14px">
@@ -201,7 +203,7 @@ export function getHubHtml(): string {
 <script>
   const vscode = acquireVsCodeApi();
   let state = null;
-  let conn = { kinds: [], profiles: [], currentKind: '', currentProfileId: '', isNewProfile: true, fieldValues: {}, lastSelectedProfileId: '' };
+  let conn = { kinds: [], profiles: [], currentKind: '', currentProfileId: '', isNewProfile: true, fieldValues: {}, lastSelectedProfileId: '', activeProfileId: '' };
 
   document.querySelectorAll('#nav .item').forEach(el => {
     el.addEventListener('click', () => {
@@ -220,6 +222,7 @@ export function getHubHtml(): string {
       state = msg.state;
       conn.kinds = state.kinds;
       conn.profiles = state.profiles;
+      conn.activeProfileId = state.activeProfileId || '';
       renderOverview();
       renderRuntime();
       renderConnectors();
@@ -448,7 +451,30 @@ export function getHubHtml(): string {
     document.getElementById('connFieldsArea').style.display = unavailable ? 'none' : 'block';
     document.getElementById('connSaveBtn').disabled = unavailable;
     document.getElementById('connDeleteBtn').textContent = conn.isNewProfile ? 'Cancel' : 'Delete';
+
+    // Only 'sql' has an "active connection" concept — that's what Schema Explorer, SQL
+    // IntelliSense, and the status bar item all read. Selecting/editing a profile here
+    // does NOT change which one they use; this button is the only thing that does.
+    const setActiveBtn = document.getElementById('connSetActiveBtn');
+    const activeNote = document.getElementById('connActiveNote');
+    const isSql = conn.currentKind === 'sql' && !conn.isNewProfile;
+    const isActive = isSql && conn.currentProfileId === conn.activeProfileId;
+    setActiveBtn.style.display = (isSql && !isActive) ? 'inline-block' : 'none';
+    if (isSql) {
+      activeNote.style.display = 'block';
+      activeNote.textContent = isActive
+        ? '✓ This is the active connection — Schema Explorer and SQL IntelliSense use it.'
+        : 'This is not the active connection — Schema Explorer/IntelliSense are using a different one.';
+    } else {
+      activeNote.style.display = 'none';
+    }
   }
+
+  document.getElementById('connSetActiveBtn').addEventListener('click', () => {
+    if (conn.currentKind === 'sql' && !conn.isNewProfile && conn.currentProfileId) {
+      vscode.postMessage({ type: 'setActiveProfile', id: conn.currentProfileId });
+    }
+  });
 
   document.getElementById('connInstallExtBtn').addEventListener('click', e => {
     const extId = e.target.dataset.extId;

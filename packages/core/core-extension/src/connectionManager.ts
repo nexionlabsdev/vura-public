@@ -55,7 +55,7 @@ export class ConnectionManager {
     public static async saveProfile(context: vscode.ExtensionContext, profile: SqlProfile, secretPayload?: string): Promise<void> {
         let profiles = this.getProfiles(context);
         const index = profiles.findIndex(p => p.id === profile.id);
-        
+
         if (index > -1) {
             profiles[index] = profile;
         } else {
@@ -63,7 +63,7 @@ export class ConnectionManager {
         }
 
         await context.globalState.update(this.PROFILES_KEY, profiles);
-        
+
         // Save sensitive payload if provided (Like Client Secret or SQL Password)
         if (secretPayload) {
             await context.secrets.store(`secret-${profile.id}`, secretPayload);
@@ -73,6 +73,10 @@ export class ConnectionManager {
             await this.setActiveProfile(context, profile.id);
         } else if (this.getActiveProfileId(context) === profile.id) {
             this.updateStatusBar(context); // Update UI just in case name changed
+            // The active profile's own connection details (server/database/auth) may have
+            // just changed — the cached schema could now point at the wrong server.
+            this.invalidateSchemaCache();
+            vscode.commands.executeCommand('vura-sql.refreshSchema');
         }
     }
 
@@ -80,18 +84,20 @@ export class ConnectionManager {
         let profiles = this.getProfiles(context);
         profiles = profiles.filter(p => p.id !== profileId);
         await context.globalState.update(this.PROFILES_KEY, profiles);
-        
+
         // Remove associated secret
         try {
             await context.secrets.delete(`secret-${profileId}`);
         } catch(e) { /* ignore if not found */ }
-        
+
         if (this.getActiveProfileId(context) === profileId) {
             if (profiles.length > 0) {
                 await this.setActiveProfile(context, profiles[0].id);
             } else {
                 await context.globalState.update(this.ACTIVE_PROFILE_KEY, undefined);
                 this.updateStatusBar(context);
+                this.invalidateSchemaCache();
+                vscode.commands.executeCommand('vura-sql.refreshSchema');
             }
         }
     }
@@ -99,9 +105,28 @@ export class ConnectionManager {
     public static async setActiveProfile(context: vscode.ExtensionContext, profileId: string): Promise<void> {
         await context.globalState.update(this.ACTIVE_PROFILE_KEY, profileId);
         this.updateStatusBar(context);
+        // The Schema Explorer / SQL IntelliSense cache is keyed to whichever connection was
+        // active when it first loaded and never re-queries on its own — drop it here, the one
+        // choke point every "switch active connection" path runs through, so the next tree
+        // expand / completion request re-fetches against the newly active connection.
+        this.invalidateSchemaCache();
         // Refresh Config UI if open
         vscode.commands.executeCommand('vura-connections.configView.focus');
         vscode.commands.executeCommand('vura-connections.refreshConfigurationPanel');
+        vscode.commands.executeCommand('vura-sql.refreshSchema');
+    }
+
+    /**
+     * Lazy require to avoid a hard circular import (schemaService.ts already imports
+     * ConnectionManager from this file) — same pattern already used elsewhere in this
+     * extension (e.g. extension.ts's cleanNotebookSession) to sidestep exactly this.
+     */
+    private static invalidateSchemaCache(): void {
+        try {
+            require('./schemaService').SchemaService.invalidate();
+        } catch (e) {
+            console.error('Failed to invalidate schema cache:', e);
+        }
     }
 
     public static async getSecretForProfile(context: vscode.ExtensionContext, profileId: string): Promise<string | undefined> {
