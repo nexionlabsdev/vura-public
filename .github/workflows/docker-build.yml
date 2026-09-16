@@ -1,0 +1,202 @@
+name: Docker Build & Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish images to ghcr.io and Docker Hub'
+        type: boolean
+        default: false
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-build-test:
+    name: Build & Test Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Plugin Catalog Manifest
+        run: bash docker/generate-catalog-manifest.sh
+
+      - name: Build vura-runner Image
+        run: docker build -f docker/vura-runner/Dockerfile -t vura-runner:test .
+
+      - name: Build vura-web-studio Image
+        run: docker build -f docker/vura-web-studio/Dockerfile -t vura-web-studio:test .
+
+      # --- Test vura-runner ---
+      - name: Test vura-runner (no plugins)
+        run: |
+          docker run -d --name runner-no-plugins -p 3000:3000 vura-runner:test
+          sleep 5
+          curl -f http://localhost:3000/api/flows || (docker logs runner-no-plugins && exit 1)
+          LOGS=$(docker logs runner-no-plugins 2>&1)
+          if echo "$LOGS" | grep -q "vura-dataverse"; then
+            echo "Error: vura-dataverse loaded when no plugins were specified!"
+            exit 1
+          fi
+          docker rm -f runner-no-plugins
+
+      - name: "Test vura-runner (env var: VURA_PLUGINS=vura-dataverse)"
+        run: |
+          docker run -d --name runner-env-plugin -p 3001:3000 -e VURA_PLUGINS=vura-dataverse vura-runner:test
+          sleep 5
+          curl -f http://localhost:3001/api/flows || (docker logs runner-env-plugin && exit 1)
+          LOGS=$(docker logs runner-env-plugin 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -q "@vura-data-os/vura-dataverse"; then
+            echo "Error: @vura-data-os/vura-dataverse plugin was not recognized!"
+            exit 1
+          fi
+          docker rm -f runner-env-plugin
+
+      - name: "Test vura-runner (CLI flag: --plugins=vura-dataverse)"
+        run: |
+          docker run -d --name runner-flag-plugin -p 3002:3000 vura-runner:test --plugins=vura-dataverse
+          sleep 5
+          curl -f http://localhost:3002/api/flows || (docker logs runner-flag-plugin && exit 1)
+          LOGS=$(docker logs runner-flag-plugin 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -q "@vura-data-os/vura-dataverse"; then
+            echo "Error: @vura-data-os/vura-dataverse plugin was not recognized!"
+            exit 1
+          fi
+          docker rm -f runner-flag-plugin
+
+      - name: "Test vura-runner (env var: VURA_PLUGINS=vura-sharepoint)"
+        run: |
+          docker run -d --name runner-env-sharepoint -p 3003:3000 -e VURA_PLUGINS=vura-sharepoint vura-runner:test
+          sleep 5
+          curl -f http://localhost:3003/api/flows || (docker logs runner-env-sharepoint && exit 1)
+          LOGS=$(docker logs runner-env-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -q "@vura-data-os/vura-sharepoint"; then
+            echo "Error: @vura-data-os/vura-sharepoint plugin was not recognized!"
+            exit 1
+          fi
+          docker rm -f runner-env-sharepoint
+
+      - name: "Test vura-runner (CLI flag: --plugins=vura-sharepoint)"
+        run: |
+          docker run -d --name runner-flag-sharepoint -p 3004:3000 vura-runner:test --plugins=vura-sharepoint
+          sleep 5
+          curl -f http://localhost:3004/api/flows || (docker logs runner-flag-sharepoint && exit 1)
+          LOGS=$(docker logs runner-flag-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -q "@vura-data-os/vura-sharepoint"; then
+            echo "Error: @vura-data-os/vura-sharepoint plugin was not recognized!"
+            exit 1
+          fi
+          docker rm -f runner-flag-sharepoint
+
+      # --- Test vura-web-studio ---
+      - name: Test vura-web-studio (no plugins)
+        run: |
+          docker run -d --name studio-no-plugins -p 8080:8080 -e PASSWORD=testpass vura-web-studio:test
+          sleep 5
+          curl -sI http://localhost:8080 | head -n 1
+          docker rm -f studio-no-plugins
+
+      - name: "Test vura-web-studio (env var: VURA_PLUGINS=vura-dataverse)"
+        run: |
+          docker run -d --name studio-env-plugin -p 8081:8080 -e PASSWORD=testpass -e VURA_PLUGINS=vura-dataverse vura-web-studio:test
+          sleep 5
+          LOGS=$(docker logs studio-env-plugin 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -qi "vura-dataverse"; then
+            echo "Error: vura-dataverse plugin extension was not recognized!"
+            exit 1
+          fi
+          docker rm -f studio-env-plugin
+
+      - name: "Test vura-web-studio (CLI flag: --plugins=vura-dataverse)"
+        run: |
+          docker run -d --name studio-flag-plugin -p 8082:8080 -e PASSWORD=testpass vura-web-studio:test --plugins=vura-dataverse
+          sleep 5
+          LOGS=$(docker logs studio-flag-plugin 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -qi "vura-dataverse"; then
+            echo "Error: vura-dataverse plugin extension was not recognized!"
+            exit 1
+          fi
+          docker rm -f studio-flag-plugin
+
+      - name: "Test vura-web-studio (env var: VURA_PLUGINS=vura-sharepoint)"
+        run: |
+          docker run -d --name studio-env-sharepoint -p 8083:8080 -e PASSWORD=testpass -e VURA_PLUGINS=vura-sharepoint vura-web-studio:test
+          sleep 5
+          LOGS=$(docker logs studio-env-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -qi "vura-sharepoint"; then
+            echo "Error: vura-sharepoint plugin extension was not recognized!"
+            exit 1
+          fi
+          docker rm -f studio-env-sharepoint
+
+      - name: "Test vura-web-studio (CLI flag: --plugins=vura-sharepoint)"
+        run: |
+          docker run -d --name studio-flag-sharepoint -p 8084:8080 -e PASSWORD=testpass vura-web-studio:test --plugins=vura-sharepoint
+          sleep 5
+          LOGS=$(docker logs studio-flag-sharepoint 2>&1)
+          echo "$LOGS"
+          if ! echo "$LOGS" | grep -qi "vura-sharepoint"; then
+            echo "Error: vura-sharepoint plugin extension was not recognized!"
+            exit 1
+          fi
+          docker rm -f studio-flag-sharepoint
+
+  # --- Publish Gating (Manual workflow_dispatch trigger only) ---
+  publish-images:
+    name: Publish Images (Gated)
+    needs: docker-build-test
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push vura-runner
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/vura-runner/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/vura-runner:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/vura-runner:latest
+
+      - name: Build and push vura-web-studio
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/vura-web-studio/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/vura-web-studio:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/vura-web-studio:latest

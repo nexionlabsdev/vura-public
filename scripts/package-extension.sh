@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 # Packages a VS Code extension (packages/<name>) as a .vsix.
 #
-# core-extension and vura-dataverse-adapter are standalone (non-workspace) npm
-# projects — their @vura-data-os/* dependencies resolve as normal npm
-# packages, not workspace symlinks, so vsce can package them directly with
-# no staging/tarball workaround needed.
+# core-extension is a standalone (non-workspace) npm project — its @vura-data-os/*
+# dependencies resolve as normal npm packages, not workspace symlinks, so vsce
+# can package them directly with no staging/tarball workaround needed.
+#
+# vura-dataverse and vura-sharepoint ARE npm workspace members. `vsce package`
+# (without --no-dependencies) shells out to `npm list --production --parseable
+# --depth=99999` to figure out which node_modules files to bundle — and npm,
+# on seeing this dir is a workspace member, roots that listing at the *repo*
+# root instead of packages/<name>, regardless of --workspaces=false or a
+# local .npmrc (verified: npm keeps resolving "workspace root" from the
+# nearest ancestor package.json's "workspaces" field either way). That extra
+# "dependency" entry then gets glob'd from the repo root with only
+# `<repo-root>/node_modules/**` excluded, which sweeps up
+# packages/<name>/node_modules a second time and vsce's own duplicate-path
+# check rejects the resulting VSIX. So for these packages this script stages
+# a full copy of the (already-built) extension outside the monorepo tree —
+# where no ancestor package.json declares it as a workspace member — and
+# runs `vsce package` there instead.
 #
 # This script assumes packages/<name>/node_modules is already populated:
 #   - Before the packages are published (or to test local changes to a
@@ -14,7 +28,6 @@
 #
 # Usage: scripts/package-extension.sh <package-name> [--target <vsce-target>] [-o <output.vsix>]
 #   e.g. scripts/package-extension.sh core-extension --target darwin-arm64 -o dist/vura-core-darwin-arm64.vsix
-#        scripts/package-extension.sh vura-dataverse-adapter -o dist/vura-dataverse-adapter.vsix
 
 set -euo pipefail
 
@@ -52,16 +65,68 @@ node "$ROOT_DIR/scripts/copy-duckdb-vendor.js"
 echo "==> Compiling $PKG_NAME"
 (cd "$EXT_DIR" && npm run compile)
 
+# See banner comment: workspace members need `vsce package` run outside the
+# monorepo tree so npm's ancestor-workspace detection can't kick in.
+IS_WORKSPACE_MEMBER=""
+if node -e "
+  const ws = require('$ROOT_DIR/package.json').workspaces || [];
+  process.exit(ws.includes('packages/$PKG_NAME') ? 0 : 1);
+"; then
+  IS_WORKSPACE_MEMBER=1
+fi
+
+if [[ -n "$IS_WORKSPACE_MEMBER" ]]; then
+  PACKAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vura-ext-stage.XXXXXX")"
+  echo "==> Staging packages/$PKG_NAME outside the monorepo for packaging"
+  cp -R "$EXT_DIR/." "$PACKAGE_DIR/"
+else
+  PACKAGE_DIR="$EXT_DIR"
+fi
+
 echo "==> Packaging"
 PACKAGE_ARGS=(package --no-git-tag-version --skip-license --allow-missing-repository "${VSCE_ARGS[@]+"${VSCE_ARGS[@]}"}")
 if [[ -n "$OUT_PATH" ]]; then
   mkdir -p "$(dirname "$OUT_PATH")"
   PACKAGE_ARGS+=(-o "$(cd "$(dirname "$OUT_PATH")" && pwd)/$(basename "$OUT_PATH")")
 fi
-(cd "$EXT_DIR" && npx --yes @vscode/vsce "${PACKAGE_ARGS[@]}")
+
+BACKUP="$(mktemp "${TMPDIR:-/tmp}/vura-ext-backup.XXXXXX")"
+cp "$PACKAGE_DIR/package.json" "$BACKUP"
+cleanup_ext() {
+  if [[ -n "$IS_WORKSPACE_MEMBER" ]]; then
+    # $PACKAGE_DIR is a disposable copy outside the repo — discard it entirely.
+    rm -rf "$PACKAGE_DIR"
+  else
+    # $PACKAGE_DIR is the real, committed packages/$PKG_NAME — restore its
+    # package.json (the rename/strip below mutates it in place).
+    cp "$BACKUP" "$PACKAGE_DIR/package.json"
+  fi
+  rm -f "$BACKUP"
+}
+trap cleanup_ext EXIT
+
+node -e '
+  const fs = require("fs");
+  const pkgPath = process.argv[1];
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  let modified = false;
+  if (pkg.name && pkg.name.includes("/")) {
+    pkg.name = pkg.name.split("/").pop();
+    modified = true;
+  }
+  if (pkg.files) {
+    delete pkg.files;
+    modified = true;
+  }
+  if (modified) {
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+  }
+' "$PACKAGE_DIR/package.json"
+
+(cd "$PACKAGE_DIR" && npx --yes @vscode/vsce "${PACKAGE_ARGS[@]}")
 
 if [[ -z "$OUT_PATH" ]]; then
   mkdir -p "$ROOT_DIR/dist"
-  mv "$EXT_DIR"/*.vsix "$ROOT_DIR/dist/"
+  mv "$PACKAGE_DIR"/*.vsix "$ROOT_DIR/dist/"
   echo "==> Output: $ROOT_DIR/dist/$(ls -t "$ROOT_DIR/dist" | head -1)"
 fi

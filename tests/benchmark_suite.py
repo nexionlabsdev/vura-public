@@ -41,7 +41,7 @@ class BenchmarkSuite:
         self.port = args.port
         self.flows_dir = os.path.abspath(args.flows_dir)
         self.report_path = os.path.abspath(args.report)
-        self.runner_cli = os.path.abspath("packages/vura-runner/out/cli.js")
+        self.runner_cli = os.path.abspath("packages/core/vura-runner/out/cli.js")
         self.venv_path = os.environ.get(
             "VURA_PYTHON_VENV_PATH",
             os.path.abspath(".vura/storage/sessions/fe6b7784be3c7d5add3f44af867f8fb5/venv")

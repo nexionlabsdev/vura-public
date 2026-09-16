@@ -6,7 +6,7 @@ Welcome to the deep dive on the Vura Data OS Architecture. This document explore
 
 The true power of the Vura Data OS is its Inter-Process Communication (IPC) layer. Instead of serializing data as JSON strings and piping it between processes (which is slow and memory-intensive for large datasets), we use a high-performance binary bridge based on **DuckDB** and **Parquet files**.
 
-The core extension acts as the orchestrator. When a notebook cell runs, it spawns an isolated sidecar process (Python or Node.js). This sidecar uses our `@vura/io` / `vura.io` library to save outputs natively into the workspace storage. When the next cell runs—even in a different language—it queries that same dataset using DuckDB.
+The core extension acts as the orchestrator. When a notebook cell runs, it spawns an isolated sidecar process (Python or Node.js) communicating over local stdio (stdin/stdout) using JSON-line control messages. This sidecar uses our `@vura/io` / `vura.io` library to save outputs natively into the workspace storage via Parquet/Arrow files. When the next cell runs—even in a different language—it queries that same dataset using DuckDB.
 
 ### The Polyglot Bridge Sequence
 
@@ -40,7 +40,7 @@ sequenceDiagram
 ## Why this architecture?
 1. **Zero-Serialization Overhead:** Parquet is a columnar binary format. Reading and writing is exponentially faster than JSON serialization.
 2. **True Polyglot State:** Because Parquet is a universal standard, Python (Pandas/Arrow), Node.js (Arrow), and DuckDB can all read the exact same file on disk natively.
-3. **Decoupled Execution:** Sidecars run isolated. If a Python script crashes, the Core Extension (and VS Code) remains stable.
+3. **Decoupled Execution:** Sidecars run isolated over local stdio. If a Python script crashes, the Core Extension (and VS Code) remains stable.
 
 ## Micro-Kernel Overview
 
@@ -54,13 +54,25 @@ graph TD
     A -->|Manages| C[DuckDB]
     A -->|Orchestrates| D[Polyglot Notebook]
 
-    E[Dataverse Adapter Add-on] --->|Registers|R
-    F[vura-dataverse-runner-plugin Add-on] --->|Registers|R
+    E[VURA Dataverse Connector] --->|Registers|R
+    F[VURA SharePoint Connector] --->|Registers|R
+    J[VURA OneDrive Connector] --->|Registers|R
+    K[VURA Google Drive Connector] --->|Registers|R
+    L[VURA S3 Connector] --->|Registers|R
+    M[VURA Local Folder Connector] --->|Registers|R
 
     E -->|Uses|G[core-sdk]
     F -->|Uses| G
+    J -->|Uses| G
+    K -->|Uses| G
+    L -->|Uses| G
+    M -->|Uses| G
 
     D -->|Executes Sidecar| H[Python/JS Sidecar]
     H -->|Saves Parquet| I[Storage]
     C -->|Reads Parquet| I
+
+## VURA Enterprise vs Local Sidecars
+
+VURA Public's sidecars communicate over local stdio; gRPC is used only by VURA Enterprise's separate remote orchestrator.
 ```

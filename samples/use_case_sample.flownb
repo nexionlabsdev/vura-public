@@ -38,7 +38,7 @@ cells:
 
       import pandas as pd\r
 
-      df = data.get(\"cell_1\")\r
+      df = data.get(\"cell_2\")\r
 
       for row in df.itertuples():\r
 
@@ -88,7 +88,7 @@ cells:
       SELECT * FROM accounts;
     metadata:
       tableName: accounts
-      connectionId: local-sql-server-7043
+      connectionId: local-sql-server-0681
       connectionName: Local SQL Server
   - kind: 2
     language: sql
@@ -97,7 +97,7 @@ cells:
       SELECT * FROM contacts;
     metadata:
       connectionName: Local SQL Server
-      connectionId: local-sql-server-7043
+      connectionId: local-sql-server-0681
   - kind: 2
     language: vura-terminal
     value: '!ingest-file "nested_data.json" json -> ingest_nested_data'
@@ -179,7 +179,7 @@ cells:
       -- Step 4: Sync the processed accounts back to the D365 mock server via
       the external Add-on
 
-      !sync_dataverse --source processed_accounts --target accounts --mode
+      !dataverse.sync --source processed_accounts --target accounts --mode
       upsert
     metadata: {}
   - kind: 2
@@ -205,8 +205,8 @@ cells:
         }
       }
     metadata:
-      graphSourceCell: 8
-      graphSourceCellName: cell_8
+      graphSourceCell: 16
+      graphSourceCellName: cell_16
   - kind: 2
     language: html
     value: >
@@ -255,4 +255,4 @@ cells:
         notebookRunGroups:
           groupValue: "2"
 requiredPlugins:
-  - "@vura-data-os/vura-dataverse-runner-plugin"
+  - "@vura-data-os/vura-dataverse"

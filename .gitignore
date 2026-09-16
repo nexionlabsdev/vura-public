@@ -13,6 +13,12 @@ dist/
 # TypeScript build info
 *.tsbuildinfo
 
+# Packaging-only lockfile staged by install-local-deps.sh for npm workspace
+# member Add-ons (vura-dataverse, vura-sharepoint) — the root package-lock.json
+# is the one that's actually committed.
+packages/connectors/vura-dataverse/package-lock.json
+packages/connectors/vura-sharepoint/package-lock.json
+
 # Dependency directories
 jspm_packages/
 
@@ -27,7 +33,11 @@ yarn-error.log*
 # MacOS system files
 .DS_Store
 
-# Python venv
+# Python build & runtime artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
 .venv/
 
 # vura-runner local runtime state

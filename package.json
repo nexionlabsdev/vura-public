@@ -3,11 +3,17 @@
   "private": true,
   "license": "AGPL-3.0-or-later",
   "workspaces": [
-    "packages/core-sdk",
-    "packages/vura-dataverse-sync-core",
-    "packages/vura-runner",
-    "packages/vura-dataverse-runner-plugin",
-    "packages/vura-io"
+    "packages/core/core-sdk",
+    "packages/core/vura-odata-sync-core",
+    "packages/core/vura-runner",
+    "packages/core/vura-io",
+    "packages/connectors/vura-dataverse",
+    "packages/connectors/vura-dataverse-sync-core",
+    "packages/connectors/vura-sharepoint",
+    "packages/connectors/vura-local",
+    "packages/connectors/vura-s3",
+    "packages/connectors/vura-onedrive",
+    "packages/connectors/vura-googledrive"
   ],
   "scripts": {
     "postinstall": "node scripts/copy-duckdb-vendor.js",

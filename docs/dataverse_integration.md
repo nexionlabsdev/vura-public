@@ -4,11 +4,10 @@ This document details how VURA writes data *back* into Dynamics 365 (Dataverse).
 
 While SQL is used for querying (via TDS endpoint), Dataverse is strictly read-only through TDS. To solve this, the integration uses the Dataverse Web API (OData V4) to perform inserts, updates, and deletes seamlessly.
 
-The integration is split across three packages so the same sync logic runs in either kernel:
+The integration uses **`packages/connectors/vura-dataverse`**, backed by **`packages/connectors/vura-dataverse-sync-core`**:
 
-- **`packages/vura-dataverse-sync-core`** — the actual `$batch` sync engine: argument parsing, Dataverse metadata lookup, batch chunking/sending, response parsing, HTML result rendering. Depends only on `@vura-data-os/core-sdk`'s host-agnostic types (`FlownbCell`, `ICellLogger`, `IVuraEnvironment`) — no `vscode` import at all.
-- **`packages/vura-dataverse-adapter`** — the VS Code Add-on: a thin `IVuraProvider` wrapper that registers with `core-extension` and delegates `!sync_dataverse` to `vura-dataverse-sync-core`.
-- **`packages/vura-dataverse-runner-plugin`** — the `vura-runner` CLI plugin: the same wrapper, registering with the CLI's `ProviderRegistry` instead. See [SDK Guide](sdk_guide.md#vura-runner-cli) for how a notebook declares it via `requiredPlugins`, or how to set it globally via `vura.plugins`.
+- **`packages/connectors/vura-dataverse-sync-core`** — the actual `$batch` sync engine: argument parsing, Dataverse metadata lookup, batch chunking/sending, response parsing, HTML result rendering. Depends only on `@vura-data-os/core-sdk`'s host-agnostic types (`FlownbCell`, `ICellLogger`, `IVuraEnvironment`) — no `vscode` import at all.
+- **`packages/connectors/vura-dataverse`** — unified package supporting both CLI and VS Code Extension host execution paths (registering `!dataverse.sync`).
 
 ---
 
@@ -18,7 +17,7 @@ The primary engine for pushing data to Dataverse is triggered by the `!sync_data
 
 It automatically handles OData V4 formatting, authentication, and chunked `$batch` processing to abide by API limits, while dynamically validating local tables against live Dataverse metadata to prevent schema errors.
 
-`!sync_dataverse` only reaches this engine if a provider for it is registered — in VS Code, `vura-dataverse-adapter` must be installed and active; in the CLI, `vura-dataverse-runner-plugin` must be loaded (via `requiredPlugins` or `vura.plugins`). Otherwise the command falls through to a raw shell command and fails with "command not found".
+`!dataverse.sync` only reaches this engine if a provider for it is registered — in VS Code, `vura-dataverse` must be active; in the CLI, `vura-dataverse` must be loaded (via `requiredPlugins` or `vura.plugins`). Otherwise the command falls through to a raw shell command and fails with "command not found".
 
 ### The Sync Process Flow
 

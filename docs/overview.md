@@ -34,8 +34,8 @@ There are two kernels — the VS Code `core-extension` and the standalone `vura-
 
 **External Add-ons (The Micro-Kernel Model)**
 Specialized functionalities (such as syncing with Dataverse) are packaged as Add-ons depending only on `@vura-data-os/core-sdk` — never the full weight of either kernel. The same class implementing `IVuraProvider` can register with either host:
-- In VS Code, an Add-on is a separate extension (e.g. `vura-dataverse-adapter`) that fetches the core extension's exports on activation and calls `registerProvider`.
-- In the CLI, an Add-on is an npm plugin package (e.g. `vura-dataverse-runner-plugin`) that `vura-runner` loads by name — declared by the notebook itself (`requiredPlugins`) or globally (`vura.plugins` config) — and registers the same way.
+- In VS Code, an Add-on is a separate extension (e.g. `vura-dataverse`) that fetches the core extension's exports on activation and calls `registerProvider`.
+- In the CLI, an Add-on is an npm plugin package (e.g. `vura-dataverse`) that `vura-runner` loads by name — declared by the notebook itself (`requiredPlugins`) or globally (`vura.plugins` config) — and registers the same way.
 
 Either kernel then dispatches a recognized magic command straight to the registered Add-on's `handleCommand()`; anything unrecognized falls back to a raw shell command.
 

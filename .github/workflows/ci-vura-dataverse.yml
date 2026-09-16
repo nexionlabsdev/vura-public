@@ -1,0 +1,55 @@
+name: CI - vura-dataverse
+
+# vura-dataverse is an npm workspace member with no native dependencies, so
+# ubuntu-only is enough.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/connectors/vura-dataverse/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
+      - '.github/workflows/ci-vura-dataverse.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/connectors/vura-dataverse/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
+      - '.github/workflows/ci-vura-dataverse.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-vura-dataverse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      # Dependency order matters: vura-dataverse imports the compiled `out/`
+      # of these via npm workspace symlinks.
+      - name: Build core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
+
+      - name: Build vura-odata-sync-core
+        run: npm run compile --workspace=packages/core/vura-odata-sync-core
+
+      - name: Build vura-dataverse
+        run: npm run compile --workspace=packages/connectors/vura-dataverse
+
+      - name: Run vura-dataverse test suite
+        run: npm test --workspace=packages/connectors/vura-dataverse
