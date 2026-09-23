@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "vura://sidecar/response.schema.json",
+  "type": "object",
+  "required": ["id", "status", "stdout", "stderr"],
+  "properties": {
+    "id": { "type": "string" },
+    "status": { "enum": ["ok", "error"] },
+    "stdout": { "type": "string" },
+    "stderr": { "type": "string" },
+    "error": { "type": "string" }
+  },
+  "additionalProperties": false
+}

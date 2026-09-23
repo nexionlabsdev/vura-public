@@ -1,0 +1,67 @@
+name: CI - connectors
+
+# Connectors are npm workspace members with no native dependencies, so
+# ubuntu-latest is sufficient. Runs build and unit tests across all 6
+# connectors in parallel.
+on:
+  push:
+    branches: [main, personal-main]
+    paths:
+      - 'packages/connectors/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
+      - '.github/workflows/ci-connectors.yml'
+  pull_request:
+    branches: [main, personal-main]
+    paths:
+      - 'packages/connectors/**'
+      - 'packages/core/core-sdk/**'
+      - 'packages/core/vura-odata-sync-core/**'
+      - '.github/workflows/ci-connectors.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-connectors-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Test ${{ matrix.connector }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        connector:
+          - vura-dataverse
+          - vura-sharepoint
+          - vura-onedrive
+          - vura-googledrive
+          - vura-s3
+          - vura-local
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      # Dependency order matters: connectors import compiled `out/` of core-sdk
+      # (and vura-odata-sync-core for Dataverse and SharePoint).
+      - name: Build core-sdk
+        run: npm run compile --workspace=packages/core/core-sdk
+
+      - name: Build vura-odata-sync-core
+        run: npm run compile --workspace=packages/core/vura-odata-sync-core
+
+      - name: Build ${{ matrix.connector }}
+        run: npm run compile --workspace=packages/connectors/${{ matrix.connector }}
+
+      - name: Run ${{ matrix.connector }} test suite
+        run: npm test --workspace=packages/connectors/${{ matrix.connector }}

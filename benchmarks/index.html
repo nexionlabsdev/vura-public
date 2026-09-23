@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VURA Scale & Performance Benchmark Dashboard</title>
+    <!-- Chart.js vendored locally -->
+    <script src="chart.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f8fafc;
+            --muted-color: #94a3b8;
+            --accent-color: #38bdf8;
+            --border-color: #334155;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 24px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            margin-bottom: 24px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 16px;
+        }
+        h1 { margin: 0 0 8px 0; color: var(--accent-color); font-size: 28px; }
+        .meta-info {
+            display: flex;
+            gap: 24px;
+            background: var(--card-bg);
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            font-size: 14px;
+            color: var(--muted-color);
+            margin-bottom: 24px;
+        }
+        .meta-item strong { color: var(--text-color); }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+        @media (max-width: 900px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+        .card {
+            background: var(--card-bg);
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+        }
+        .card h2 {
+            margin-top: 0;
+            font-size: 18px;
+            color: var(--accent-color);
+        }
+        .card p {
+            font-size: 13px;
+            color: var(--muted-color);
+            margin-bottom: 16px;
+        }
+        canvas { max-width: 100%; height: 280px !important; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚡ VURA Scale & Performance Dashboard</h1>
+            <p style="color: var(--muted-color); margin: 0;">Real-engine benchmark metrics measuring throughput, scaling curves, and RSS memory usage.</p>
+        </header>
+
+        <div class="meta-info" id="meta-container">
+            <div class="meta-item">Machine Fingerprint: <strong id="meta-machine">Loading...</strong></div>
+            <div class="meta-item">VURA Version: <strong id="meta-version">-</strong></div>
+            <div class="meta-item">Git SHA: <strong id="meta-git">-</strong></div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>1. append() Latency vs Table Size</h2>
+                <p>Validates O(1) table append performance across growing dataset row counts.</p>
+                <canvas id="appendChart"></canvas>
+            </div>
+
+            <div class="card">
+                <h2>2. Read Latency (object vs arrow)</h2>
+                <p>Compares materialization latency of JS object arrays versus zero-copy Arrow batches.</p>
+                <canvas id="readChart"></canvas>
+            </div>
+
+            <div class="card">
+                <h2>3. RSS Memory Usage vs Table Size</h2>
+                <p>Tracks process RSS memory growth across table sizes to detect memory leaks.</p>
+                <canvas id="memoryChart"></canvas>
+            </div>
+
+            <div class="card">
+                <h2>4. Format Performance Comparison</h2>
+                <p>Compares get/stream duration across formats at matched record sizes.</p>
+                <canvas id="formatChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function loadDashboard() {
+            try {
+                const res = await fetch('results.jsonl');
+                if (!res.ok) return;
+                const text = await res.text();
+                const lines = text.trim().split('\n').filter(l => l.length > 0);
+                const records = lines.map(l => JSON.parse(l));
+
+                if (records.length === 0) return;
+
+                const first = records[0];
+                document.getElementById('meta-machine').textContent = `${first.machine.cpu} (${first.machine.cores} cores, ${first.machine.ramGB}GB RAM) [${first.machine.os}]`;
+                document.getElementById('meta-version').textContent = first.vuraVersion;
+                document.getElementById('meta-git').textContent = first.gitSha.substring(0, 8);
+
+                // Chart 1: Append Scaling
+                const appendRecords = records.filter(r => r.suite === 'append_scaling');
+                const pyAppends = appendRecords.filter(r => r.language === 'python');
+                const nodeAppends = appendRecords.filter(r => r.language === 'javascript');
+                const appendRowCounts = Array.from(new Set(appendRecords.map(r => r.tableRows))).sort((a, b) => a - b);
+                const appendLabels = appendRowCounts.map(r => r.toLocaleString());
+
+                new Chart(document.getElementById('appendChart'), {
+                    type: 'line',
+                    data: {
+                        labels: appendLabels,
+                        datasets: [
+                            {
+                                label: 'Python append() (ms)',
+                                data: appendRowCounts.map(rows => pyAppends.find(r => r.tableRows === rows)?.durationMs ?? null),
+                                borderColor: '#38bdf8',
+                                backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                                fill: false,
+                                tension: 0.2
+                            },
+                            {
+                                label: 'Node append() (ms)',
+                                data: appendRowCounts.map(rows => nodeAppends.find(r => r.tableRows === rows)?.durationMs ?? null),
+                                borderColor: '#34d399',
+                                backgroundColor: 'rgba(52, 211, 153, 0.1)',
+                                fill: false,
+                                tension: 0.2
+                            }
+                        ]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                // Chart 2: Read Latency (object vs arrow across languages)
+                const readRecords = records.filter(r => r.suite === 'read_scaling');
+                const readRowCounts = Array.from(new Set(readRecords.map(r => r.tableRows))).sort((a, b) => a - b);
+                const readLabels = readRowCounts.map(r => r.toLocaleString());
+
+                const getReadData = (lang, fmt) => readRowCounts.map(rows => {
+                    const found = readRecords.find(r => (r.language === lang || (lang === 'python' && !r.language)) && r.format === fmt && r.tableRows === rows);
+                    return found ? found.durationMs : null;
+                });
+
+                new Chart(document.getElementById('readChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: readLabels,
+                        datasets: [
+                            { label: 'Python (object)', data: getReadData('python', 'object'), backgroundColor: '#38bdf8' },
+                            { label: 'Python (arrow)', data: getReadData('python', 'arrow'), backgroundColor: '#0284c7' },
+                            { label: 'Node (object)', data: getReadData('javascript', 'object'), backgroundColor: '#f43f5e' },
+                            { label: 'Node (arrow)', data: getReadData('javascript', 'arrow'), backgroundColor: '#10b981' }
+                        ]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                // Chart 3: Memory RSS Usage vs Table Size (Read Scaling)
+                const getReadRssData = (lang, fmt) => readRowCounts.map(rows => {
+                    const found = readRecords.find(r => (r.language === lang || (lang === 'python' && !r.language)) && r.format === fmt && r.tableRows === rows);
+                    return found ? found.rssMemMB : null;
+                });
+
+                new Chart(document.getElementById('memoryChart'), {
+                    type: 'line',
+                    data: {
+                        labels: readLabels,
+                        datasets: [
+                            { label: 'Python (object) RSS', data: getReadRssData('python', 'object'), borderColor: '#38bdf8', backgroundColor: '#38bdf8', tension: 0.2 },
+                            { label: 'Python (arrow) RSS', data: getReadRssData('python', 'arrow'), borderColor: '#0284c7', backgroundColor: '#0284c7', borderDash: [5, 5], tension: 0.2 },
+                            { label: 'Node (object) RSS', data: getReadRssData('javascript', 'object'), borderColor: '#f43f5e', backgroundColor: '#f43f5e', tension: 0.2 },
+                            { label: 'Node (arrow) RSS', data: getReadRssData('javascript', 'arrow'), borderColor: '#10b981', backgroundColor: '#10b981', borderDash: [5, 5], tension: 0.2 }
+                        ]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+                // Chart 4: Format Performance Comparison
+                const sumDurations = (lang, fmt) => readRecords
+                    .filter(r => (r.language === lang || (lang === 'python' && !r.language)) && r.format === fmt)
+                    .reduce((a, b) => a + b.durationMs, 0);
+
+                new Chart(document.getElementById('formatChart'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Python (object)', 'Python (arrow)', 'Node (object)', 'Node (arrow)'],
+                        datasets: [{
+                            data: [
+                                sumDurations('python', 'object'),
+                                sumDurations('python', 'arrow'),
+                                sumDurations('javascript', 'object'),
+                                sumDurations('javascript', 'arrow')
+                            ],
+                            backgroundColor: ['#38bdf8', '#0284c7', '#f43f5e', '#10b981']
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+
+            } catch (e) {
+                console.error('Failed to load benchmark results:', e);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', loadDashboard);
+    </script>
+</body>
+</html>

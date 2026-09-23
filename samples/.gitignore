@@ -1,0 +1,16 @@
+#.venv
+.venv/
+
+#vura cli
+.vura/
+
+#exported
+exported/
+
+# graph*
+graph*
+
+# outputs.json
+*.outputs.json
+**/set-vura-secrets.sh
+**/set-vura-secrets.ps1

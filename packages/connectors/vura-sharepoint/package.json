@@ -1,0 +1,42 @@
+{
+  "name": "@vura-data-os/vura-sharepoint",
+  "version": "0.1.0",
+  "description": "VURA SharePoint Lists OData + document library connector",
+  "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/connectors/vura-sharepoint#readme",
+  "license": "AGPL-3.0",
+  "author": "Nexion Labs <info@nexionlabs.dev>",
+  "publisher": "nexion-labs",
+  "type": "commonjs",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "files": [
+    "out"
+  ],
+  "engines": {
+    "node": ">=18",
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": [
+    "onNotebook:vura-notebook",
+    "onLanguage:vura-terminal",
+    "onLanguage:shellscript"
+  ],
+  "scripts": {
+    "compile": "tsc -b ./",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.16.2",
+    "@vura-data-os/core-sdk": "^0.1.0",
+    "@vura-data-os/vura-odata-sync-core": "^0.1.0",
+    "exceljs": "^4.4.0",
+    "parquetjs-lite": "^0.8.7"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^18.19.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.9.3"
+  }
+}

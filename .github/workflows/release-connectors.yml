@@ -1,0 +1,159 @@
+name: Release connectors
+
+# Releases all 6 VURA connector Add-ons:
+# 1. Publishes each @vura-data-os/vura-<connector> package to npm with OIDC provenance.
+# 2. Packages each connector as a standalone .vsix and uploads artifacts for the GitHub Release.
+# 3. Optionally publishes .vsix packages to VS Code Marketplace / Open VSX if secrets are set.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.2.3)'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish-npm:
+    name: Publish @vura-data-os/${{ matrix.connector }} to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm OIDC trusted publishing
+    strategy:
+      fail-fast: false
+      matrix:
+        connector:
+          - vura-dataverse
+          - vura-sharepoint
+          - vura-onedrive
+          - vura-googledrive
+          - vura-s3
+          - vura-local
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Set version to ${{ inputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = 'packages/connectors/${{ matrix.connector }}/package.json';
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = '${{ inputs.version }}';
+            for (const dep of Object.keys(pkg.dependencies || {})) {
+              if (dep.startsWith('@vura-data-os/')) pkg.dependencies[dep] = '^${{ inputs.version }}';
+            }
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Build dependencies
+        run: |
+          npm run compile --workspace=packages/core/core-sdk
+          npm run compile --workspace=packages/core/vura-odata-sync-core
+
+      - name: Build ${{ matrix.connector }}
+        run: npm run compile --workspace=packages/connectors/${{ matrix.connector }}
+
+      - name: Test ${{ matrix.connector }}
+        run: npm test --workspace=packages/connectors/${{ matrix.connector }}
+
+      - name: Publish (skips if this version is already on npm)
+        run: |
+          set -e
+          cd packages/connectors/${{ matrix.connector }}
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$NAME@$VERSION is already published — skipping."
+          else
+            echo "Publishing $NAME@$VERSION..."
+            npm publish --access public --provenance
+          fi
+
+  package-vsix:
+    name: Package connector VSIX extensions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Update versions to ${{ inputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const catalog = JSON.parse(fs.readFileSync('docker/plugins-catalog.json', 'utf8'));
+            for (const key of Object.keys(catalog.connectors || {})) {
+              const path = 'packages/connectors/' + key + '/package.json';
+              if (fs.existsSync(path)) {
+                const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+                pkg.version = '${{ inputs.version }}';
+                for (const dep of Object.keys(pkg.dependencies || {})) {
+                  if (dep.startsWith('@vura-data-os/')) pkg.dependencies[dep] = '^${{ inputs.version }}';
+                }
+                fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+              }
+            }
+          "
+
+      - name: Build all connector VSIXs
+        run: bash docker/build-plugins.sh --mode=vsix --out-dir=dist
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ env.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          PRE_RELEASE_FLAG=""
+          VERSION="${{ inputs.version }}"
+          MINOR="$(echo "$VERSION" | cut -d. -f2)"
+          if [ $((MINOR % 2)) -ne 0 ]; then
+            PRE_RELEASE_FLAG="--pre-release"
+          fi
+          for vsix in dist/*.vsix; do
+            echo "Publishing $vsix to VS Code Marketplace..."
+            npx --yes @vscode/vsce publish --packagePath "$vsix" $PRE_RELEASE_FLAG --pat "$VSCE_PAT" || echo "Publishing $vsix failed or skipped."
+          done
+
+      - name: Publish to Open VSX
+        if: ${{ env.OVSX_PAT != '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          for vsix in dist/*.vsix; do
+            echo "Publishing $vsix to Open VSX..."
+            npx --yes ovsx publish "$vsix" --pat "$OVSX_PAT" || echo "Publishing $vsix failed or skipped."
+          done
+
+      - name: Upload Connector VSIX Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-extensions
+          path: dist/*.vsix

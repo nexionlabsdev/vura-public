@@ -1,0 +1,8 @@
+{
+  "name": "Vega-Lite",
+  "scopeName": "source.vega-lite",
+  "patterns": [
+    { "include": "source.json" }
+  ],
+  "repository": {}
+}

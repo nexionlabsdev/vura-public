@@ -1,0 +1,162 @@
+name: Release
+
+# Trigger by pushing a tag like `v1.2.3`. Every publishable package (the
+# npm packages, the Python package, and the VS Code extensions) is released in
+# lockstep at that same version. The actual publish logic for each target lives
+# in its own reusable workflow file so each can also be re-run standalone via
+# workflow_dispatch.
+#
+# npm publishing uses OIDC trusted publishing — no NPM_TOKEN secret needed.
+# One-time setup on npmjs.com for each @vura-data-os/* and @vura/* package:
+# Package Settings -> Trusted Publisher -> GitHub Actions, then set
+# Organization/Repository to this repo and Workflow filename to that
+# package's own release-*.yml.
+#
+# Optional secrets:
+#   VSCE_PAT   — Azure DevOps PAT for VS Code Marketplace publishing.
+#   OVSX_PAT   — Open VSX Registry publishing token.
+#   PYPI_API_TOKEN — PyPI token for Python package publishing (if not using OIDC).
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.3) — for manual/dry-run triggers'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  determine-version:
+    name: Determine release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#v}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  release-core-sdk:
+    name: core-sdk
+    needs: determine-version
+    uses: ./.github/workflows/release-core-sdk.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  release-vura-odata-sync-core:
+    name: vura-odata-sync-core
+    needs: determine-version
+    uses: ./.github/workflows/release-vura-odata-sync-core.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  release-vura-io:
+    name: vura-io
+    needs: determine-version
+    uses: ./.github/workflows/release-vura-io.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  release-vura-dataverse-sync-core:
+    name: vura-dataverse-sync-core
+    needs: determine-version
+    uses: ./.github/workflows/release-vura-dataverse-sync-core.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  release-vura-io-py:
+    name: vura-io (Python)
+    needs: determine-version
+    uses: ./.github/workflows/release-vura-io-py.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  release-vura-runner:
+    name: vura-runner
+    needs:
+      - determine-version
+      - release-core-sdk
+      - release-vura-io
+    uses: ./.github/workflows/release-vura-runner.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  release-connectors:
+    name: connectors
+    needs:
+      - determine-version
+      - release-core-sdk
+      - release-vura-odata-sync-core
+    uses: ./.github/workflows/release-connectors.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  release-core-extension:
+    name: core-extension
+    needs:
+      - determine-version
+      - release-core-sdk
+      - release-vura-odata-sync-core
+      - release-vura-runner
+    uses: ./.github/workflows/release-core-extension.yml
+    with:
+      version: ${{ needs.determine-version.outputs.version }}
+    secrets: inherit
+
+  github-release:
+    name: Create GitHub Release
+    needs:
+      - determine-version
+      - release-core-extension
+      - release-connectors
+      - release-vura-io-py
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release and attach all release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILES=()
+          while IFS= read -r -d '' file; do
+            if [[ -f "$file" ]]; then
+              FILES+=("$file")
+            fi
+          done < <(find artifacts -type f -print0)
+
+          gh release create "${{ needs.determine-version.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --title "v${{ needs.determine-version.outputs.version }}" \
+            --generate-notes \
+            "${FILES[@]}"

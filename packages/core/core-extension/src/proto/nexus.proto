@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package nexus;
+
+service NexusBridge {
+  rpc ExecuteQuery (QueryRequest) returns (ArrowResponse);
+  rpc SaveTable (SaveTableRequest) returns (Empty);
+  rpc GetTable (GetTableRequest) returns (ArrowResponse);
+}
+
+message QueryRequest {
+  string query = 1;
+}
+
+message SaveTableRequest {
+  string table_name = 1;
+  bytes arrow_ipc_data = 2; // Stream of Arrow IPC binary data representing the table
+}
+
+message GetTableRequest {
+  string table_name = 1;
+}
+
+message ArrowResponse {
+  bytes arrow_ipc_data = 1; // Stream of Arrow IPC binary data
+}
+
+message Empty {
+}

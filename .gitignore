@@ -1,0 +1,55 @@
+# Node modules
+node_modules/
+
+# Compilation output
+out/
+dist/
+
+# VS Code specific
+.vscode/
+.vscode-test/
+*.vsix
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Packaging-only lockfile staged by install-local-deps.sh for npm workspace
+# member Add-ons (vura-dataverse, vura-sharepoint) — the root package-lock.json
+# is the one that's actually committed.
+packages/connectors/vura-dataverse/package-lock.json
+packages/connectors/vura-sharepoint/package-lock.json
+
+# Dependency directories
+jspm_packages/
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+
+# MacOS system files
+.DS_Store
+
+# Python build & runtime artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# vura-runner local runtime state
+.vura/
+
+# Sample file exports
+samples/exported/
+
+# tests output
+tests/flows/
+tests/*.html
+
+# samples data
+samples/data/
+samples/requirements.txt

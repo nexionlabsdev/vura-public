@@ -1,0 +1,41 @@
+services:
+  vura-runner:
+    build:
+      context: .
+      dockerfile: docker/vura-runner/Dockerfile
+    image: vura-runner:local
+    ports:
+      - "3000:3000"
+    environment:
+      - VURA_PORT=3000
+      - VURA_HOME=/data/.vura
+      # Example: enable plugins via environment variable
+      # - VURA_PLUGINS=vura-dataverse
+    volumes:
+      - runner-notebooks:/notebooks
+      - runner-data:/data
+
+  vura-web-studio:
+    build:
+      context: .
+      dockerfile: docker/vura-web-studio/Dockerfile
+    image: vura-web-studio:local
+    ports:
+      - "8080:8080"
+    environment:
+      - PASSWORD=vura-secret
+      - AUTH=password
+      - VURA_HOME=/data/.vura
+      # Example: enable plugins via environment variable
+      # - VURA_PLUGINS=vura-dataverse
+    volumes:
+      - studio-workspace:/home/coder/project
+      - studio-config:/home/coder/.local/share/code-server
+      - studio-data:/data
+
+volumes:
+  runner-notebooks:
+  runner-data:
+  studio-workspace:
+  studio-config:
+  studio-data:

@@ -1,0 +1,78 @@
+version: 1
+cells:
+  - kind: 1
+    language: markdown
+    value: "# Dataverse accounts ETL"
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: |-
+      SELECT 
+      TOP 10
+      *
+      FROM account
+    metadata:
+      connectionName: Dataverse
+      connectionId: sql-162484
+  - kind: 2
+    language: sql
+    value: >-
+      SELECT
+          -- Primary Key for the target clone table (generate a new unique ID)
+          NEWID()                                   AS cr21c_accountcloneid,
+
+          -- Business Profile
+          a.name                                    AS cr21c_accountname,
+          a.customertypecode                        AS cr21c_accountstatus,
+          a.revenue                                 AS cr21c_annualrevenue,
+          a.emailaddress1                           AS cr21c_email,
+          a.telephone1                              AS cr21c_phone,
+          a.fax                                     AS cr21c_fax,
+          a.industrycode                            AS cr21c_industry,
+          a.ownershipcode                           AS cr21c_ownership,
+          a.numberofemployees                       AS cr21c_numberofemployees,
+          a.sic                                     AS cr21c_siccode,
+          a.websiteurl                              AS cr21c_websiteurl,
+
+          -- Address Fields
+          a.address1_line1                          AS cr21c_address1street,
+          a.address1_city                           AS cr21c_address1city,
+          a.address1_stateorprovince                AS cr21c_address1stateprovince,
+          a.address1_postalcode                     AS cr21c_address1postalcode,
+          a.address1_country                        AS cr21c_address1countryregion,
+
+          -- Primary Contact Information (pulled via primarycontactid lookup)
+          c.fullname                                AS cr21c_primarycontactname,
+          c.emailaddress1                           AS cr21c_primarycontactemail,
+          COALESCE(c.telephone1, c.mobilephone)      AS cr21c_primarycontactphone,
+
+          -- Currency & Exchange Rate
+          a.transactioncurrencyid                   AS transactioncurrencyid,
+          a.exchangerate                            AS exchangerate,
+
+          -- Ownership & Unit
+          a.ownerid                                 AS ownerid,
+
+          -- Status & Lifecycle
+          a.statecode                               AS statecode,
+          a.statuscode                              AS statuscode
+      FROM
+          account AS a
+      LEFT JOIN
+          contact AS c ON a.primarycontactid = c.contactid;
+    metadata:
+      connectionName: Dataverse
+      connectionId: sql-162484
+      tableName: cell_account_seed
+  - kind: 2
+    language: sql
+    value: UPDATE cell_account_seed SET cr21c_accountname = 'Fourth Coffee (sample)'
+      WHERE cr21c_accountcloneid = '867D03C8-4B77-4A9D-9235-DE53E7B1F89E'
+    metadata: {}
+  - kind: 2
+    language: vura-terminal
+    value: "!dataverse.sync --source cell_account_seed --target cr21c_accountclone
+      --mode upsert"
+    metadata:
+      dataverseConnectionId: sql-556840
+      dataverseConnectionName: Dataverse Developer

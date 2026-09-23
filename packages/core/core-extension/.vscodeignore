@@ -1,0 +1,23 @@
+.vscode/**
+.vscode-test/**
+out/**/*.map
+src/**
+scripts/**
+.gitignore
+tsconfig.json
+*.tsbuildinfo
+**/*.d.ts
+**/*.map
+**/node_modules/.cache/**
+**/node_modules/.package-lock.json
+
+# Never exclude native addon binaries (e.g. @duckdb/node-bindings) even if a broader rule
+# above (or a future .gitignore vsce merges in) would otherwise catch them.
+!node_modules/**/*.node
+!node_modules/@duckdb/node-bindings/**
+!node_modules/@duckdb/node-api/**
+
+# Exclude native build intermediate directories and source code
+**/node_modules/@duckdb/node-bindings/build/**
+**/node_modules/@duckdb/node-bindings/src/**
+**/node_modules/@duckdb/node-bindings/deps/**

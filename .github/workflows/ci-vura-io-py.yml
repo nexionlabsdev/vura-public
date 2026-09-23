@@ -1,0 +1,59 @@
+name: CI - vura-io-py
+
+# Python counterpart of vura-io. Resolves the shared JSON schema contracts
+# directly from the repo-root schemas/ dir (see
+# packages/core/vura-io-py/vura/io/schemas.py) — no build/copy step needed.
+on:
+  push:
+    branches: [main, personal-main]
+    paths:
+      - 'packages/core/vura-io-py/**'
+      - 'schemas/**'
+      - '.github/workflows/ci-vura-io-py.yml'
+  pull_request:
+    branches: [main, personal-main]
+    paths:
+      - 'packages/core/vura-io-py/**'
+      - 'schemas/**'
+      - '.github/workflows/ci-vura-io-py.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-vura-io-py-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - name: Build vura-io dependency for cross-language contract tests
+        run: |
+          npm install --no-audit --no-fund
+          npm run compile --workspace=packages/core/core-sdk
+          npm run compile --workspace=packages/core/vura-io
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install vura-io-py
+        run: |
+          cd packages/core/vura-io-py
+          pip install -e . pytest
+
+      - name: Test vura-io-py (Python shredder & partitioning contracts)
+        run: |
+          cd packages/core/vura-io-py
+          pytest

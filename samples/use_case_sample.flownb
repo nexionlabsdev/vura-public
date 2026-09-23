@@ -1,0 +1,260 @@
+version: 1
+cells:
+  - kind: 2
+    language: sql
+    value: "-- Replaces the table entirely if it already exists\r
+
+      \r
+
+      CREATE OR REPLACE TABLE users AS \r
+
+      SELECT * FROM (\r
+
+      \    VALUES \r
+
+      \        (1, 'Alice Smith', 'alice@example.com', 28),\r
+
+      \        (2, 'Bob Jones', 'bob@example.com', 34),\r
+
+      \        (3, 'Charlie Brown', 'charlie@example.com', 22)\r
+
+      ) AS t(id, name, email, age);"
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: show tables
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: SELECT id, name, email, concat(age, ' years') as age FROM users
+    metadata: {}
+  - kind: 2
+    language: vura-terminal
+    value: "!pip3 install pandas pyarrow"
+    metadata: {}
+  - kind: 2
+    language: python
+    value: "from vura.io import data\r
+
+      import pandas as pd\r
+
+      df = data.get(\"cell_2\")\r
+
+      for row in df.itertuples():\r
+
+      \    print(row.id, row.name, row.email, row.age)\r
+
+      endline = \"!\"\r
+
+      print(f\"Hello World{endline}\")"
+    metadata: {}
+  - kind: 2
+    language: javascript
+    value: >-
+      import { data } from "@vura-data-os/vura-io";
+
+      import { readFileSync } from "fs";
+
+
+      async function processNestedData() {
+        // Load nested JSON data
+        const rawData = readFileSync("./nested_data.json", "utf8");
+        const complexObject = JSON.parse(rawData);
+
+        // Save complex object (auto-shredded into relational DuckDB tables)
+        await data.pack("flattened_products", complexObject);
+        console.log("Nested data saved and flattened.");
+
+        // Reconstruct complex object back from relational tables
+        const reconstructed = await data.unpack("flattened_products");
+        console.log("Reconstructed JSON:", JSON.stringify(reconstructed, null, 2));
+      }
+
+
+      processNestedData().catch(console.error);
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: SHOW TABLES
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: SELECT * FROM flattened_products_products_tags
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: |-
+      -- Step 1: Pull accounts from D365 Mock Server into DuckDB
+      SELECT * FROM accounts;
+    metadata:
+      tableName: accounts
+      connectionId: local-sql-server-0681
+      connectionName: Local SQL Server
+  - kind: 2
+    language: sql
+    value: |-
+      -- Step 1: Pull accounts from D365 Mock Server into DuckDB
+      SELECT * FROM contacts;
+    metadata:
+      connectionName: Local SQL Server
+      connectionId: local-sql-server-0681
+  - kind: 2
+    language: vura-terminal
+    value: '!ingest-file "nested_data.json" json -> ingest_nested_data'
+    metadata: {}
+  - kind: 2
+    language: sql
+    value: SELECT * FROM ingest_nested_data_products_details_dimensions;
+    metadata: {}
+  - kind: 2
+    language: vura-terminal
+    value: "!pip3 install pandas pyarrow"
+    metadata: {}
+  - kind: 2
+    language: python
+    value: >
+      from vura.io import data
+
+      import pandas as pd
+
+
+      # Step 2: Transform Data using Python
+
+      # 1. Get the data from shared memory (DuckDB via vura.io)
+
+      df = data.get("accounts")
+
+
+      # 2. Perform Advanced Analysis: Pivot table on revenue by account category
+
+      print("Performing advanced analysis...")
+
+      pivot_df = pd.pivot_table(df, values='revenue',
+      index='accountcategorycode', aggfunc='mean')
+
+      print(pivot_df)
+
+
+      # 3. Modify data (e.g., increase revenue by 10% for category 1)
+
+      df.loc[df['accountcategorycode'] == 1, 'revenue'] = df['revenue'] * 1.20
+
+
+      # 4. Save back to shared memory
+
+      data.put("processed_accounts", df)
+
+      print("Python transformation complete.")
+    metadata: {}
+  - kind: 2
+    language: javascript
+    value: >
+      // Step 3: Demonstrate the Auto-Schema Flattener using @vura-data-os/vura-io in JS
+
+      import { data } from "@vura-data-os/vura-io";
+
+      import { readFileSync } from "fs";
+
+
+      async function processNestedData() {
+        // Load nested JSON data
+        const rawData = readFileSync("./nested_data.json", "utf8");
+        const complexObject = JSON.parse(rawData);
+
+        // Save complex object (auto-shredded into relational DuckDB tables)
+        await data.pack("flattened_products", complexObject);
+        console.log("Nested data saved and flattened.");
+
+        // Reconstruct complex object back from relational tables
+        const reconstructed = await data.unpack("flattened_products");
+        console.log("Reconstructed JSON:", JSON.stringify(reconstructed, null, 2));
+      }
+
+
+      processNestedData().catch(console.error);
+    metadata: {}
+  - kind: 2
+    language: vura-terminal
+    value: >-
+      -- Step 4: Sync the processed accounts back to the D365 mock server via
+      the external Add-on
+
+      !dataverse.sync --source processed_accounts --target accounts --mode
+      upsert
+    metadata:
+      dataverseConnectionId: sql-429367
+      dataverseConnectionName: Dataverse Developer
+  - kind: 2
+    language: json
+    value: >-
+      {
+        "$query": "SELECT accountcategorycode, AVG(revenue) as avg_revenue FROM processed_accounts GROUP BY accountcategorycode",
+        "$as": "array"
+      }
+    metadata:
+      vuraType: json-compose
+  - kind: 2
+    language: vega-lite
+    value: |-
+      {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "description": "Average Revenue by Account Category",
+        "mark": "bar",
+        "encoding": {
+          "x": {"field": "accountcategorycode", "type": "nominal"},
+          "y": {"field": "avg_revenue", "type": "quantitative"},
+          "color": {"field": "accountcategorycode", "type": "nominal"}
+        }
+      }
+    metadata:
+      graphSourceCell: 16
+      graphSourceCellName: cell_16
+  - kind: 2
+    language: html
+    value: >
+      <!-- Step 7: HTML Template Cell rendering a Dashboard/Invoice -->
+
+      <style>
+        .dashboard { font-family: sans-serif; padding: 20px; }
+        .kpi { display: inline-block; padding: 15px; margin: 10px; background: #f0f0f0; border-radius: 8px; border-left: 5px solid #007acc; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+      </style>
+
+
+      <div class="dashboard">
+        <h2>📊 D365 Accounts KPI Dashboard</h2>
+
+        <div class="kpi">
+          <h3>Total Processed Accounts</h3>
+          <p style="font-size: 24px; font-weight: bold;">{{ count }}</p>
+        </div>
+
+        <h3>Recent Accounts Overview</h3>
+        <table>
+          <thead>
+            <tr>
+              {% for key in row | keys %}
+                <th>{{ key }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                {% for key in r | keys %}
+                  <td>{{ r[key] }}</td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    metadata:
+      templateContextTable: processed_accounts
+      metadata:
+        notebookRunGroups:
+          groupValue: "2"
+requiredPlugins:
+  - "@vura-data-os/vura-dataverse"

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VURA | Run Details</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="run-details-page">
+        <header class="top-nav glass-panel">
+            <div class="nav-left">
+                <button id="back-btn" class="icon-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                    Back to Dashboard
+                </button>
+                <h1 id="run-title">Run Details</h1>
+            </div>
+            <div class="nav-right">
+                <span id="run-status" class="badge">Loading...</span>
+            </div>
+        </header>
+
+        <main class="content-container">
+            <div class="run-summary card glass-panel">
+                <div class="card-body summary-grid">
+                    <div>
+                        <span class="label">Run ID</span>
+                        <div id="summary-id" class="value">-</div>
+                    </div>
+                    <div>
+                        <span class="label">Flow</span>
+                        <div id="summary-flow" class="value">-</div>
+                    </div>
+                    <div>
+                        <span class="label">Timestamp</span>
+                        <div id="summary-time" class="value">-</div>
+                    </div>
+                    <div>
+                        <span class="label">Total Duration</span>
+                        <div id="summary-duration" class="value">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cells-container" id="cells-container">
+                <!-- Cell cards injected here -->
+            </div>
+        </main>
+    </div>
+
+    <script src="/run.js"></script>
+</body>
+</html>

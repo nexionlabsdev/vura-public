@@ -1,0 +1,86 @@
+{
+  "connectors": {
+    "vura-dataverse": {
+      "npmPackage": "@vura-data-os/vura-dataverse",
+      "vsixName": "vura-dataverse.vsix",
+      "description": "Dynamics 365 / Microsoft Dataverse OData connector"
+    },
+    "vura-sharepoint": {
+      "npmPackage": "@vura-data-os/vura-sharepoint",
+      "vsixName": "vura-sharepoint.vsix",
+      "description": "SharePoint Lists OData sync + document library import/export connector"
+    },
+    "vura-onedrive": {
+      "npmPackage": "@vura-data-os/vura-onedrive",
+      "vsixName": "vura-onedrive.vsix",
+      "description": "OneDrive (Microsoft Graph) import/export connector"
+    },
+    "vura-googledrive": {
+      "npmPackage": "@vura-data-os/vura-googledrive",
+      "vsixName": "vura-googledrive.vsix",
+      "description": "Google Drive import/export connector"
+    },
+    "vura-s3": {
+      "npmPackage": "@vura-data-os/vura-s3",
+      "vsixName": "vura-s3.vsix",
+      "description": "Amazon S3 import/export connector"
+    },
+    "vura-local": {
+      "npmPackage": "@vura-data-os/vura-local",
+      "vsixName": "vura-local.vsix",
+      "description": "Local / mapped folder import/export connector"
+    }
+  },
+  "corePackages": {
+    "core-sdk": {
+      "npmPackage": "@vura-data-os/core-sdk",
+      "description": "Shared Add-on contract: IVuraProvider, ProviderRegistry, IVuraEnvironment, ConnectionProfile, IStorageProvider"
+    },
+    "vura-runner": {
+      "npmPackage": "@vura-data-os/vura-runner",
+      "description": "Standalone CLI/engine that executes .flownb notebooks outside VS Code"
+    },
+    "vura-io": {
+      "npmPackage": "@vura-data-os/vura-io",
+      "description": "Node data abstraction library (Parquet/Arrow-backed key-value/table store) shared with sidecars"
+    },
+    "vura-io-py": {
+      "npmPackage": "vura-io",
+      "description": "Python counterpart of vura-io, used by Python sidecars"
+    },
+    "vura-odata-sync-core": {
+      "npmPackage": "@vura-data-os/vura-odata-sync-core",
+      "description": "Host-agnostic OData v4 $batch sync engine shared by the Dataverse and SharePoint connectors"
+    },
+    "core-extension": {
+      "vsixName": "vura-studio-lite.vsix",
+      "description": "The VS Code extension: .flownb notebook runner UI, embedded DuckDB engine, Connections sidebar"
+    }
+  },
+  "deprecatedPackages": {
+    "vura-dataverse-sync-core": {
+      "npmPackage": "@vura-data-os/vura-dataverse-sync-core",
+      "description": "Pre-unification duplicate of the Dataverse sync engine, superseded by vura-odata-sync-core + vura-dataverse. Still built/released for compatibility; not consumed by anything else in the repo."
+    }
+  },
+  "dockerImages": {
+    "vura-runner": {
+      "dockerfile": "docker/vura-runner/Dockerfile",
+      "image": "vura-runner",
+      "registries": [
+        "ghcr.io/nexionlabsdev/vura-public/vura-runner",
+        "docker.io/<DOCKERHUB_USERNAME>/vura-runner"
+      ],
+      "description": "Headless vura-runner CLI/HTTP server for executing .flownb notebooks"
+    },
+    "vura-web-studio": {
+      "dockerfile": "docker/vura-web-studio/Dockerfile",
+      "image": "vura-web-studio",
+      "registries": [
+        "ghcr.io/nexionlabsdev/vura-public/vura-web-studio",
+        "docker.io/<DOCKERHUB_USERNAME>/vura-web-studio"
+      ],
+      "description": "Browser-based code-server preloaded with the VURA core extension"
+    }
+  }
+}
