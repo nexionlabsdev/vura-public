@@ -77,14 +77,6 @@ jobs:
       version: ${{ needs.determine-version.outputs.version }}
     secrets: inherit
 
-  release-vura-dataverse-sync-core:
-    name: vura-dataverse-sync-core
-    needs: determine-version
-    uses: ./.github/workflows/release-vura-dataverse-sync-core.yml
-    with:
-      version: ${{ needs.determine-version.outputs.version }}
-    secrets: inherit
-
   release-vura-io-py:
     name: vura-io (Python)
     needs: determine-version

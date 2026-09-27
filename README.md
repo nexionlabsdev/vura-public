@@ -6,8 +6,7 @@ This repository is the open-source core. Each package below has its own README w
 
 - **[`packages/core/core-extension`](packages/core/core-extension/README.md)** — the VS Code extension that renders `.flownb` notebooks with SQL, Python, JavaScript, and HTML cells, backed by an embedded DuckDB engine.
 - **[`packages/core/core-sdk`](packages/core/core-sdk/README.md)** — the shared TypeScript SDK (`IVuraProvider`, `ProviderRegistry`, `IConnectionAdapter`, `FlownbCell`/`ICellLogger`/`IVuraEnvironment`, the Auto-Schema Flattener) used to build add-ons that run in either the VS Code extension or the CLI.
-- **[`packages/connectors/vura-dataverse-sync-core`](packages/connectors/vura-dataverse-sync-core/README.md)** — the host-agnostic Dynamics 365 / OData `$batch` sync engine.
-- **[`packages/connectors/vura-dataverse`](packages/connectors/vura-dataverse/README.md)** — CLI and VS Code extension integrations for Dataverse were unified into a single `packages/connectors/vura-dataverse` package (see Phase 9d) — the previously separate `vura-dataverse-adapter` and `vura-dataverse-runner-plugin` packages no longer exist.
+- **[`packages/connectors/vura-dataverse`](packages/connectors/vura-dataverse/README.md)** — CLI and VS Code extension integrations for Dataverse were unified into a single `packages/connectors/vura-dataverse` package (see Phase 9d) — the previously separate `vura-dataverse-adapter`, `vura-dataverse-runner-plugin`, and `vura-dataverse-sync-core` packages no longer exist.
 - **[`packages/core/vura-runner`](packages/core/vura-runner/README.md)** — a standalone CLI/engine that executes `.flownb` notebooks outside of VS Code.
 - **`samples/`** — example `.flownb` notebooks.
 

@@ -7,11 +7,13 @@ CATALOG_FILE="${ROOT_DIR}/docker/plugins-catalog.json"
 
 MODE=""
 OUT_DIR=""
+FROM_REGISTRY=""
 
 for arg in "$@"; do
   case "$arg" in
     --mode=*) MODE="${arg#--mode=}" ;;
     --out-dir=*) OUT_DIR="${arg#--out-dir=}" ;;
+    --from-registry) FROM_REGISTRY="--from-registry" ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
 done
@@ -59,7 +61,7 @@ for key in $plugin_keys; do
       console.log(connectors[process.argv[2]].vsixName);
     ' "$CONNECTORS" "$key")
     echo "==> Packaging VSIX plugin: $key -> $OUT_DIR/$vsix_name"
-    bash "$ROOT_DIR/scripts/install-local-deps.sh" "connectors/$key"
+    bash "$ROOT_DIR/scripts/install-local-deps.sh" "connectors/$key" $FROM_REGISTRY
     bash "$ROOT_DIR/scripts/package-extension.sh" "connectors/$key" -o "$OUT_DIR/$vsix_name"
   else
     echo "Unknown mode: $MODE" >&2

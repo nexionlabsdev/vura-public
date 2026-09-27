@@ -186,6 +186,9 @@ jobs:
     needs: docker-build-test
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for keyless cosign signing (Sigstore/Fulcio OIDC)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -206,7 +209,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Build and push vura-runner
+        id: build-runner
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -217,6 +224,7 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/vura-runner:latest
 
       - name: Build and push vura-web-studio
+        id: build-web-studio
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -225,3 +233,10 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}/vura-web-studio:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/vura-web-studio:latest
+
+      - name: Sign images (keyless, via GitHub OIDC)
+        run: |
+          cosign sign --yes "ghcr.io/${{ github.repository }}/vura-runner@${{ steps.build-runner.outputs.digest }}"
+          cosign sign --yes "${{ secrets.DOCKERHUB_USERNAME }}/vura-runner@${{ steps.build-runner.outputs.digest }}"
+          cosign sign --yes "ghcr.io/${{ github.repository }}/vura-web-studio@${{ steps.build-web-studio.outputs.digest }}"
+          cosign sign --yes "${{ secrets.DOCKERHUB_USERNAME }}/vura-web-studio@${{ steps.build-web-studio.outputs.digest }}"

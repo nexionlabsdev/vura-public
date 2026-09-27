@@ -78,7 +78,7 @@
     "etl",
     "automation"
   ],
-  "author": "Nexion Labs <info@nexionlabs.dev> (https://nexionlabs.dev)",
+  "author": "Nexion Labs <info@nexionlabs.dev> (https://www.nexionlabs.dev)",
   "license": "AGPL-3.0",
   "type": "commonjs",
   "directories": {

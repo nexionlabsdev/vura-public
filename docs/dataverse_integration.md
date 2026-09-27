@@ -4,10 +4,9 @@ This document details how VURA writes data *back* into Dynamics 365 (Dataverse).
 
 While SQL is used for querying (via TDS endpoint), Dataverse is strictly read-only through TDS. To solve this, the integration uses the Dataverse Web API (OData V4) to perform inserts, updates, and deletes seamlessly.
 
-The integration uses **`packages/connectors/vura-dataverse`**, backed by **`packages/connectors/vura-dataverse-sync-core`**:
+The integration lives in **`packages/connectors/vura-dataverse`**, on top of the host-agnostic `@vura-data-os/vura-odata-sync-core` OData v4 `$batch` engine:
 
-- **`packages/connectors/vura-dataverse-sync-core`** — the actual `$batch` sync engine: argument parsing, Dataverse metadata lookup, batch chunking/sending, response parsing, HTML result rendering. Depends only on `@vura-data-os/core-sdk`'s host-agnostic types (`FlownbCell`, `ICellLogger`, `IVuraEnvironment`) — no `vscode` import at all.
-- **`packages/connectors/vura-dataverse`** — unified package supporting both CLI and VS Code Extension host execution paths (registering `!dataverse.sync`).
+- **`packages/connectors/vura-dataverse`** — unified package supporting both CLI and VS Code Extension host execution paths (registering `!dataverse.sync`). Its own `syncDataverseHandler.ts` handles argument parsing, Dataverse metadata lookup, batch chunking/sending, response parsing, and HTML result rendering, built on `@vura-data-os/vura-odata-sync-core`'s host-agnostic sync primitives and `@vura-data-os/core-sdk`'s types (`FlownbCell`, `ICellLogger`, `IVuraEnvironment`) — no `vscode` import at all.
 
 ---
 
@@ -26,7 +25,7 @@ This sequence diagram explains how data moves from the DuckDB local storage, thr
 ```mermaid
 sequenceDiagram
     participant Notebook
-    participant SyncHandler as vura-dataverse-sync-core
+    participant SyncHandler as vura-dataverse (syncDataverseHandler)
     participant DataverseMetadataAPI as Dataverse API (Metadata)
     participant DataverseBatchAPI as Dataverse API ($batch)
 
@@ -48,7 +47,7 @@ sequenceDiagram
 ```
 
 > **Pro-Tip for Handling Errors:**
-> Due to the high volume of records involved in `$batch` operations, partial failures can occur. We strictly **do not** use OS/editor-level notification popups for these data errors. Instead, `vura-dataverse-sync-core` renders an HTML table detailing exactly which UUIDs failed and why, directly in the Notebook Cell Output (via `ICellLogger.replaceOutput`) — identically in VS Code and the CLI.
+> Due to the high volume of records involved in `$batch` operations, partial failures can occur. We strictly **do not** use OS/editor-level notification popups for these data errors. Instead, `vura-dataverse` renders an HTML table detailing exactly which UUIDs failed and why, directly in the Notebook Cell Output (via `ICellLogger.replaceOutput`) — identically in VS Code and the CLI.
 
 ---
 

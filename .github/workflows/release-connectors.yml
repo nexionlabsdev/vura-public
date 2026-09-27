@@ -2,7 +2,10 @@ name: Release connectors
 
 # Releases all 6 VURA connector Add-ons:
 # 1. Publishes each @vura-data-os/vura-<connector> package to npm with OIDC provenance.
-# 2. Packages each connector as a standalone .vsix and uploads artifacts for the GitHub Release.
+# 2. Once that's live, packages each connector as a standalone .vsix — installing
+#    its @vura-data-os/* deps from the npm registry at this exact version (not
+#    from local tarballs), so the VSIX bundles what was actually published —
+#    and uploads artifacts for the GitHub Release.
 # 3. Optionally publishes .vsix packages to VS Code Marketplace / Open VSX if secrets are set.
 on:
   workflow_call:
@@ -91,6 +94,11 @@ jobs:
 
   package-vsix:
     name: Package connector VSIX extensions
+    # Waits for the npm publish to land first: the VSIX build now installs
+    # @vura-data-os/* from the registry at this exact version (--from-registry
+    # below), the same way a real consumer would, instead of from local
+    # tarballs — so it needs that version to actually be live first.
+    needs: publish-npm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -124,7 +132,7 @@ jobs:
           "
 
       - name: Build all connector VSIXs
-        run: bash docker/build-plugins.sh --mode=vsix --out-dir=dist
+        run: bash docker/build-plugins.sh --mode=vsix --out-dir=dist --from-registry
 
       - name: Publish to VS Code Marketplace
         if: ${{ env.VSCE_PAT != '' }}

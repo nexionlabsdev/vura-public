@@ -1,7 +1,7 @@
 .PHONY: build deps install install-all install-runner \
         build-mac build-linux build-windows clean \
         build-core-sdk build-vura-odata-sync-core build-vura-io \
-        build-vura-dataverse-sync-core build-vura-runner \
+        build-vura-runner \
         build-vura-dataverse build-vura-sharepoint build-core-extension \
         build-vura-onedrive build-vura-googledrive build-vura-s3 build-vura-local \
         install-core-extension install-vura-dataverse install-vura-sharepoint \
@@ -34,9 +34,6 @@ build-vura-odata-sync-core: build-core-sdk
 
 build-vura-io: build-core-sdk
 	cd packages/core/vura-io && npm run compile
-
-build-vura-dataverse-sync-core: build-core-sdk build-vura-odata-sync-core
-	cd packages/connectors/vura-dataverse-sync-core && npm run compile
 
 build-vura-runner: build-core-sdk build-vura-io
 	cd packages/core/vura-runner && npm run compile
@@ -81,16 +78,16 @@ build-vura-local: build-core-sdk
 # core-extension is deliberately NOT an npm workspace member (see root
 # package.json) — its @vura-data-os/* deps resolve as normal npm packages,
 # resolved from the registry once published. install-local-deps.sh
-# overlays fresh local tarballs of the 5 packages it actually depends on
+# overlays fresh local tarballs of the packages it actually depends on
 # instead, so this always reflects the current branch, not whatever's last
 # published.
-build-core-extension: build-core-sdk build-vura-odata-sync-core build-vura-io build-vura-dataverse-sync-core build-vura-runner
+build-core-extension: build-core-sdk build-vura-odata-sync-core build-vura-io build-vura-runner
 	bash ./scripts/install-local-deps.sh core/core-extension
 	cd packages/core/core-extension && npm run compile
 
 # Build every package in the repo (all npm workspace libraries/Add-ons
 # plus core-extension), in dependency order.
-build: deps build-core-sdk build-vura-odata-sync-core build-vura-io build-vura-dataverse-sync-core build-vura-runner build-vura-dataverse build-vura-sharepoint build-vura-onedrive build-vura-googledrive build-vura-s3 build-vura-local build-core-extension
+build: deps build-core-sdk build-vura-odata-sync-core build-vura-io build-vura-runner build-vura-dataverse build-vura-sharepoint build-vura-onedrive build-vura-googledrive build-vura-s3 build-vura-local build-core-extension
 
 # --- Package a .vsix and install into local VS Code -----------------------
 install-core-extension: build-core-extension

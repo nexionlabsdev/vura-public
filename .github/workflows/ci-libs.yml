@@ -1,4 +1,4 @@
-name: CI - core-sdk / vura-odata-sync-core / vura-dataverse-sync-core / vura-io
+name: CI - core-sdk / vura-odata-sync-core / vura-io
 
 # Foundation TS libraries — no native platform-specific deps of their own
 # (vura-io's @duckdb/node-api aside, which the ubuntu runner covers), so
@@ -10,7 +10,6 @@ on:
     paths:
       - 'packages/core/core-sdk/**'
       - 'packages/core/vura-odata-sync-core/**'
-      - 'packages/connectors/vura-dataverse-sync-core/**'
       - 'packages/core/vura-io/**'
       - 'schemas/**'
       - '.github/workflows/ci-libs.yml'
@@ -19,7 +18,6 @@ on:
     paths:
       - 'packages/core/core-sdk/**'
       - 'packages/core/vura-odata-sync-core/**'
-      - 'packages/connectors/vura-dataverse-sync-core/**'
       - 'packages/core/vura-io/**'
       - 'schemas/**'
       - '.github/workflows/ci-libs.yml'
@@ -53,10 +51,6 @@ jobs:
         run: |
           npm run compile --workspace=packages/core/vura-odata-sync-core
           npm test --workspace=packages/core/vura-odata-sync-core
-
-      # No test script defined on this package yet — build only.
-      - name: Build vura-dataverse-sync-core
-        run: npm run compile --workspace=packages/connectors/vura-dataverse-sync-core
 
       - name: Build and test vura-io (shredder, schema, and partitioning contracts)
         run: |

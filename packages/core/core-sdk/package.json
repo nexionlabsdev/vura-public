@@ -21,7 +21,7 @@
     "directory": "packages/core/core-sdk"
   },
   "license": "AGPL-3.0",
-  "author": "Nexion Labs <info@nexionlabs.dev> (https://nexionlabs.dev)",
+  "author": "Nexion Labs <info@nexionlabs.dev> (https://www.nexionlabs.dev)",
   "type": "commonjs",
   "main": "out/index.js",
   "types": "out/index.d.ts",

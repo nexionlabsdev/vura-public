@@ -57,12 +57,6 @@
       "description": "The VS Code extension: .flownb notebook runner UI, embedded DuckDB engine, Connections sidebar"
     }
   },
-  "deprecatedPackages": {
-    "vura-dataverse-sync-core": {
-      "npmPackage": "@vura-data-os/vura-dataverse-sync-core",
-      "description": "Pre-unification duplicate of the Dataverse sync engine, superseded by vura-odata-sync-core + vura-dataverse. Still built/released for compatibility; not consumed by anything else in the repo."
-    }
-  },
   "dockerImages": {
     "vura-runner": {
       "dockerfile": "docker/vura-runner/Dockerfile",

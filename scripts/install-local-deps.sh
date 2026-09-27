@@ -28,13 +28,26 @@
 # packages via `npm install --no-save` — which populates node_modules
 # without ever touching the committed package.json/package-lock.json.
 #
-# Usage: scripts/install-local-deps.sh <group>/<package-name>
+# Pass --from-registry (used by the release workflow, after the npm publish
+# step for that exact version has already succeeded) to skip all of that:
+# it installs @vura-data-os/* the same way a real consumer would, resolved
+# from the registry at the version just published, instead of from local
+# tarballs built off whatever happens to be checked out. This is what
+# actually verifies the published packages install and work standalone,
+# rather than only ever testing local monorepo source.
+#
+# Usage: scripts/install-local-deps.sh <group>/<package-name> [--from-registry]
 #   e.g. scripts/install-local-deps.sh core/core-extension
+#   e.g. scripts/install-local-deps.sh connectors/vura-s3 --from-registry
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PKG_NAME="${1:?Usage: $0 <group>/<package-name>}"
+PKG_NAME="${1:?Usage: $0 <group>/<package-name> [--from-registry]}"
+FROM_REGISTRY=""
+if [[ "${2:-}" == "--from-registry" ]]; then
+  FROM_REGISTRY=1
+fi
 PKG_DIR="$ROOT_DIR/packages/$PKG_NAME"
 PKG_JSON="$PKG_DIR/package.json"
 
@@ -87,7 +100,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-LIB_PACKAGES=(core-sdk vura-io vura-odata-sync-core vura-dataverse-sync-core vura-runner)
+LIB_PACKAGES=(core-sdk vura-io vura-odata-sync-core vura-runner)
 
 # Bare lib name -> its group-qualified path under packages/. Bash 3.2 (macOS's
 # default /bin/bash) has no associative arrays, so this is a case statement
@@ -98,10 +111,32 @@ lib_path() {
     vura-io) echo "core/vura-io" ;;
     vura-odata-sync-core) echo "core/vura-odata-sync-core" ;;
     vura-runner) echo "core/vura-runner" ;;
-    vura-dataverse-sync-core) echo "connectors/vura-dataverse-sync-core" ;;
     *) echo "$1" ;;
   esac
 }
+
+if [[ -n "$FROM_REGISTRY" ]]; then
+  echo "==> Installing $PKG_NAME's dependencies from the npm registry (--from-registry)"
+  # $INSTALL_DIR's package.json is already the real one (with @vura-data-os/*
+  # ranges intact) and, for workspace members, lives outside the monorepo
+  # tree — no ancestor `workspaces` field for npm to detect — so a plain
+  # install here resolves everything, @vura-data-os/* included, straight
+  # from the registry at whatever version was just published. No stripping,
+  # no local tarballs.
+  (cd "$INSTALL_DIR" && npm install --no-audit --no-fund)
+
+  if [[ -n "$IS_WORKSPACE_MEMBER" ]]; then
+    echo "==> Copying staged node_modules back into packages/$PKG_NAME"
+    rm -rf "$PKG_DIR/node_modules"
+    mkdir -p "$PKG_DIR/node_modules"
+    cp -R "$INSTALL_DIR/node_modules/." "$PKG_DIR/node_modules/"
+    cp "$INSTALL_DIR/package-lock.json" "$PKG_DIR/package-lock.json"
+  fi
+
+  node "$ROOT_DIR/scripts/copy-duckdb-vendor.js"
+  echo "==> Done: packages/$PKG_NAME/node_modules is ready to build (from registry)"
+  exit 0
+fi
 
 echo "==> Building library packages"
 (cd "$ROOT_DIR" && npm install --no-audit --no-fund)

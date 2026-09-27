@@ -84,7 +84,7 @@ jobs:
 
       # core-extension is not an npm workspace member — its @vura-data-os/*
       # deps resolve as normal npm packages. By the time this runs,
-      # release-core-sdk.yml / release-vura-dataverse-sync-core.yml /
+      # release-core-sdk.yml / release-vura-odata-sync-core.yml /
       # release-vura-runner.yml have already published this exact version,
       # so a plain install here fetches the real thing from the registry
       # (no local tarball workaround needed at release time).
