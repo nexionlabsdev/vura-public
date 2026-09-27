@@ -38,10 +38,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macos-13 has been fully retired from GitHub's hosted runner fleet
+          # (queues forever, never picked up by any runner) and macos-14 is
+          # deprecated and due to retire next — macos-15-intel/macos-15 are
+          # the current GA x64/arm64 labels.
           - target: darwin-x64
-            runner: macos-13
+            runner: macos-15-intel
           - target: darwin-arm64
-            runner: macos-14
+            runner: macos-15
           - target: linux-x64
             runner: ubuntu-latest
           # Public-repo GitHub-hosted Linux ARM64 runners — if this label isn't
