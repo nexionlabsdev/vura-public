@@ -20,5 +20,15 @@
   },
   "dependencies": {
     "@vura-data-os/vura-runner": "^0.1.0"
+  },
+  "optionalDependencies": {
+    "@duckdb/node-bindings-darwin-arm64": "1.5.5-r.4",
+    "@duckdb/node-bindings-darwin-x64": "1.5.5-r.4",
+    "@duckdb/node-bindings-linux-arm64": "1.5.5-r.4",
+    "@duckdb/node-bindings-linux-arm64-musl": "1.5.5-r.4",
+    "@duckdb/node-bindings-linux-x64": "1.5.5-r.4",
+    "@duckdb/node-bindings-linux-x64-musl": "1.5.5-r.4",
+    "@duckdb/node-bindings-win32-arm64": "1.5.5-r.4",
+    "@duckdb/node-bindings-win32-x64": "1.5.5-r.4"
   }
 }
