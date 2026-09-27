@@ -28,6 +28,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # required so called reusable workflows can request it for npm/PyPI OIDC trusted publishing
 
 concurrency:
   group: release-${{ github.ref }}
