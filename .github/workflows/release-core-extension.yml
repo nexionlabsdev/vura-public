@@ -88,6 +88,30 @@ jobs:
       # release-vura-runner.yml have already published this exact version,
       # so a plain install here fetches the real thing from the registry
       # (no local tarball workaround needed at release time).
+      #
+      # npm's registry has some replication lag right after `npm publish`
+      # returns success — `npm install` immediately after can still
+      # 404/ETARGET on the version that was just published for up to a
+      # minute or so, so poll for it here rather than race the CDN.
+      - name: Wait for published core packages to be resolvable on the registry
+        shell: bash
+        run: |
+          set -e
+          for pkg in "@vura-data-os/core-sdk" "@vura-data-os/vura-runner"; do
+            echo "Waiting for $pkg@${{ inputs.version }}..."
+            for i in $(seq 1 20); do
+              if npm view "$pkg@${{ inputs.version }}" version >/dev/null 2>&1; then
+                echo "  -- available"
+                break
+              fi
+              if [ "$i" -eq 20 ]; then
+                echo "  -- still not resolvable after 20 attempts" >&2
+                exit 1
+              fi
+              sleep 6
+            done
+          done
+
       - name: Install dependencies
         shell: bash
         run: cd packages/core/core-extension && npm install --no-audit --no-fund
