@@ -131,6 +131,31 @@ jobs:
             }
           "
 
+      # npm's registry has some replication lag right after `npm publish`
+      # returns success — `npm view`/`npm install` immediately after can still
+      # 404/ETARGET on the version that was just published for up to a minute
+      # or so. release-core-sdk.yml and release-vura-odata-sync-core.yml
+      # already finished (release.yml's job graph guarantees that), but
+      # "finished" isn't "visible everywhere yet", so poll for it here rather
+      # than let --from-registry below race the CDN.
+      - name: Wait for published core packages to be resolvable on the registry
+        run: |
+          set -e
+          for pkg in "@vura-data-os/core-sdk" "@vura-data-os/vura-odata-sync-core"; do
+            echo "Waiting for $pkg@${{ inputs.version }}..."
+            for i in $(seq 1 20); do
+              if npm view "$pkg@${{ inputs.version }}" version >/dev/null 2>&1; then
+                echo "  -- available"
+                break
+              fi
+              if [ "$i" -eq 20 ]; then
+                echo "  -- still not resolvable after 20 attempts" >&2
+                exit 1
+              fi
+              sleep 6
+            done
+          done
+
       - name: Build all connector VSIXs
         run: bash docker/build-plugins.sh --mode=vsix --out-dir=dist --from-registry
 

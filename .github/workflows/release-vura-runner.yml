@@ -50,6 +50,17 @@ jobs:
       - name: Update npm CLI
         run: npm install -g npm@latest
 
+      # src/__tests__/sidecarE2eSpawn.test.ts spawns a real Python sidecar
+      # process that imports pandas/pyarrow — without these, that suite fails
+      # with ModuleNotFoundError instead of exercising the actual behavior.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies for sidecar tests
+        run: pip install pandas pyarrow duckdb
+
       - run: npm install --no-audit --no-fund
 
       - name: Set version to ${{ inputs.version }}
