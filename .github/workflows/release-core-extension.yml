@@ -58,9 +58,9 @@ jobs:
           # No GitHub-hosted win32-arm64 runner exists yet — that target needs
           # a self-hosted Windows-on-ARM runner if you need it.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: 'npm'
@@ -139,16 +139,39 @@ jobs:
           if [ $((MINOR % 2)) -ne 0 ]; then
             PRE_RELEASE_FLAG="--pre-release"
           fi
-          npx --yes @vscode/vsce publish --packagePath dist/vura-studio-lite-${{ matrix.target }}.vsix $PRE_RELEASE_FLAG --pat "$VSCE_PAT"
+          set +e
+          OUTPUT=$(npx --yes @vscode/vsce publish --packagePath dist/vura-studio-lite-${{ matrix.target }}.vsix $PRE_RELEASE_FLAG --pat "$VSCE_PAT" 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $STATUS -ne 0 ]; then
+            if echo "$OUTPUT" | grep -qE "already exists|already published"; then
+              echo "vura-studio-lite (${{ matrix.target }}) v$VERSION already on the Marketplace — skipping."
+            else
+              exit $STATUS
+            fi
+          fi
 
       - name: Publish to Open VSX
         if: ${{ env.OVSX_PAT != '' }}
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         shell: bash
-        run: npx --yes ovsx publish dist/vura-studio-lite-${{ matrix.target }}.vsix --target ${{ matrix.target }} --pat "$OVSX_PAT"
+        run: |
+          set +e
+          OUTPUT=$(npx --yes ovsx publish dist/vura-studio-lite-${{ matrix.target }}.vsix --target ${{ matrix.target }} --pat "$OVSX_PAT" 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ $STATUS -ne 0 ]; then
+            if echo "$OUTPUT" | grep -qE "already exists|already published"; then
+              echo "vura-studio-lite (${{ matrix.target }}) already on Open VSX — skipping."
+            else
+              exit $STATUS
+            fi
+          fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vura-studio-lite-${{ matrix.target }}
           path: dist/vura-studio-lite-${{ matrix.target }}.vsix

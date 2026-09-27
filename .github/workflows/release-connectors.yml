@@ -42,9 +42,9 @@ jobs:
           - vura-s3
           - vura-local
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -101,9 +101,9 @@ jobs:
     needs: publish-npm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: 'npm'
@@ -172,7 +172,18 @@ jobs:
           fi
           for vsix in dist/*.vsix; do
             echo "Publishing $vsix to VS Code Marketplace..."
-            npx --yes @vscode/vsce publish --packagePath "$vsix" $PRE_RELEASE_FLAG --pat "$VSCE_PAT" || echo "Publishing $vsix failed or skipped."
+            set +e
+            OUTPUT=$(npx --yes @vscode/vsce publish --packagePath "$vsix" $PRE_RELEASE_FLAG --pat "$VSCE_PAT" 2>&1)
+            STATUS=$?
+            set -e
+            echo "$OUTPUT"
+            if [ $STATUS -ne 0 ]; then
+              if echo "$OUTPUT" | grep -qE "already exists|already published"; then
+                echo "$vsix already on the Marketplace — skipping."
+              else
+                exit $STATUS
+              fi
+            fi
           done
 
       - name: Publish to Open VSX
@@ -182,11 +193,22 @@ jobs:
         run: |
           for vsix in dist/*.vsix; do
             echo "Publishing $vsix to Open VSX..."
-            npx --yes ovsx publish "$vsix" --pat "$OVSX_PAT" || echo "Publishing $vsix failed or skipped."
+            set +e
+            OUTPUT=$(npx --yes ovsx publish "$vsix" --pat "$OVSX_PAT" 2>&1)
+            STATUS=$?
+            set -e
+            echo "$OUTPUT"
+            if [ $STATUS -ne 0 ]; then
+              if echo "$OUTPUT" | grep -qE "already exists|already published"; then
+                echo "$vsix already on Open VSX — skipping."
+              else
+                exit $STATUS
+              fi
+            fi
           done
 
       - name: Upload Connector VSIX Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: connector-extensions
           path: dist/*.vsix
