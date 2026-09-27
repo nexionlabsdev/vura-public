@@ -2,6 +2,12 @@
   "name": "@vura-data-os/vura-io",
   "version": "0.1.0",
   "description": "VURA I/O library for state management, metrics, and DuckDB relational JSON shredding",
+  "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/core/vura-io#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nexionlabsdev/vura-public/#main",
+    "directory": "packages/core/vura-io"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

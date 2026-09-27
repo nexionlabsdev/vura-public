@@ -35,6 +35,24 @@ jobs:
         with:
           python-version: '3.11'
 
+      # tests/test_shredder_contract.py cross-validates this package's Python
+      # shredder against the JS one in packages/core/vura-io by shelling out
+      # to `node -e "require('.../vura-io/dist/shredder.js')..."` — so that
+      # TS package needs to actually be built first, or the require() (and
+      # the test) fails.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Update npm CLI
+        run: npm install -g npm@latest
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Build vura-io (JS) for the cross-language contract test
+        run: npm run compile --workspace=packages/core/vura-io
+
       - name: Update version to ${{ inputs.version }}
         run: |
           sed -i.bak -E 's/^version = .*/version = "${{ inputs.version }}"/' packages/core/vura-io-py/pyproject.toml

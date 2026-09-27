@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "Generic host-agnostic OData v4 $batch sync engine",
   "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/core/vura-odata-sync-core#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nexionlabsdev/vura-public/#main",
+    "directory": "packages/core/vura-odata-sync-core"
+  },
   "license": "AGPL-3.0",
   "author": "Nexion Labs <info@nexionlabs.dev>",
   "type": "commonjs",

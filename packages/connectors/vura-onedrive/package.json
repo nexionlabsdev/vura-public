@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "VURA OneDrive (Microsoft Graph) import-export connector",
   "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/connectors/vura-onedrive#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nexionlabsdev/vura-public/#main",
+    "directory": "packages/connectors/vura-onedrive"
+  },
   "license": "AGPL-3.0",
   "author": "Nexion Labs <info@nexionlabs.dev>",
   "publisher": "nexion-labs",

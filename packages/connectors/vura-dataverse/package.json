@@ -11,6 +11,11 @@
     "vscode-extension"
   ],
   "homepage": "https://github.com/nexionlabsdev/vura-public/tree/main/packages/connectors/vura-dataverse#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nexionlabsdev/vura-public/#main",
+    "directory": "packages/connectors/vura-dataverse"
+  },
   "license": "AGPL-3.0",
   "author": "Nexion Labs <info@nexionlabs.dev>",
   "publisher": "nexion-labs",
