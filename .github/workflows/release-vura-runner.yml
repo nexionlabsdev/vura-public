@@ -11,7 +11,9 @@ name: Release vura-runner
 # Uses npm OIDC trusted publishing — no NPM_TOKEN secret needed. One-time
 # setup on npmjs.com: @vura-data-os/vura-runner -> Package Settings ->
 # Trusted Publisher -> GitHub Actions, Repository = this repo, Workflow
-# filename = `release-vura-runner.yml`.
+# filename = `release.yml` — npm validates against the TOP-LEVEL calling
+# workflow, not this reusable one, even though this file is where `npm
+# publish` actually runs. See release.yml's header comment for why.
 on:
   workflow_call:
     inputs:
